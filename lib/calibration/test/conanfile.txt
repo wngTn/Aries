@@ -1,0 +1,7 @@
+[requires]
+opencv/4.10.0
+[generators]
+CMakeDeps
+CMakeToolchain
+[layout]
+cmake_layout
