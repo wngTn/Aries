@@ -1,3 +1,6 @@
 {
-    "cmake.sourceDirectory": "/home/tonyw/Documents/Projects/Aries/Aries/lib/calibration/aruco-3.1.12/utils_gl"
+    "cmake.sourceDirectory": "/home/tonyw/Documents/Projects/Aries/Aries/lib/calibration/aruco-3.1.12/utils_gl",
+    "files.associations": {
+        "string": "cpp"
+    }
 }

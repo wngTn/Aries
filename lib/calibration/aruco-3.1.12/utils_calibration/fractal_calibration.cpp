@@ -14,7 +14,7 @@ using namespace cv;
 using namespace aruco;
 
 // Constants
-const float MARKER_LENGTH = 0.241f; // Marker length in meters
+const float MARKER_LENGTH = 0.54f; // Marker length in meters
 
 /**
  * @brief Displays usage information.
