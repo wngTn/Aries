@@ -3,6 +3,7 @@ from pathlib import Path
 import cv2
 import pyarrow.dataset as ds
 import rootutils
+from tqdm import tqdm
 
 rootutils.setup_root(__file__, ".project-root", pythonpath=True, dotenv=True)
 
@@ -17,12 +18,16 @@ def process_video(
     fps=6,
 ):
     frames = []
-    for index, row in orbbec_timestamps.iterrows():
+    for index, row in tqdm(orbbec_timestamps.iterrows(), desc="Processing frames", total=len(orbbec_timestamps)):
         if index % skip_n_frames != 0:
             continue
         frame_num = int(row["frame_number"])
         collage = []
-        for camera in input_dirs.values():
+        for id_, camera in input_dirs.items():
+            if id_ == "Marshall":
+                frame_num += 3
+            elif id_ == "Orbbec":
+                frame_num += 4
             multi_view_frames = camera.glob(f"color_{frame_num:06d}_camera*.jpg")
             multi_view_frames = sorted(multi_view_frames)
             images = [cv2.imread(str(frame)) for frame in multi_view_frames]
@@ -32,6 +37,8 @@ def process_video(
                     images[i] = cv2.resize(image, (1080, 1080))
             collage.extend(images)
 
+        if len(collage) != 7:
+            break
         collage = create_collage(collage, format=[3, 4], downscale_factor=2, frame_index=frame_num)
         frames.append(collage)
 
@@ -62,5 +69,5 @@ if __name__ == "__main__":
         input_dirs=input_dirs,
         output_path=output_dir / f"{'_'.join(cameras)}.mp4",
         skip_n_frames=2,
-        fps=6,
+        fps=12,
     )
