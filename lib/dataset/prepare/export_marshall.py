@@ -1,15 +1,16 @@
-import json
-import subprocess
+"""
+WARNING: This script assumes that the mp4 timestamps begin earlier than the ORBBEC timestamps.
+If the ORBBEC timestamps begin earlier you still have to implement to first forward the ORBBEC timestamps.
+"""
+from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-import ffmpeg
 
 import cv2
+import ffmpeg
 import pyarrow.dataset as ds
-from tqdm import tqdm
-
-from collections import defaultdict
 from pandas import DataFrame as df
+from tqdm import tqdm
 
 
 def get_creation_time(video_path):
@@ -65,19 +66,28 @@ def process_files(files, timestamp_df, output_dir, cam_num):
             )
 
             # If this is the first frame, or if advancing to the next video frame is better
-            if prev_video_timestamp is None or abs(video_timestamp - df_timestamp) < abs(prev_video_timestamp - df_timestamp):
+            if prev_video_timestamp is None or abs(
+                video_timestamp - df_timestamp
+            ) < abs(prev_video_timestamp - df_timestamp):
                 prev_frame = frame.copy()
                 prev_video_timestamp = video_timestamp
-                print(f"Video frame: {video_frame_num}, Video Timestamp: {video_timestamp}")
+                print(
+                    f"Video frame: {video_frame_num}, Video Timestamp: {video_timestamp}"
+                )
                 print(
                     f"Orbbec Frame: {timestamp_pointer}, Orbbec Timestamp: {df_timestamp}"
                 )
-                print(f"Difference in nanoseconds: {abs(video_timestamp - df_timestamp)}")
-                
+                print(
+                    f"Difference in nanoseconds: {abs(video_timestamp - df_timestamp)}"
+                )
+
                 video_frame_num += 1  # Advance video pointer
             else:
                 # Export the current video frame (video_frame_num should correspond to the desired timestamp in the DataFrame)
-                output_frame_path = output_dir / f"color_{df_frame['frame_number']:06d}_camera{cam_num:02d}.jpg"
+                output_frame_path = (
+                    output_dir
+                    / f"color_{df_frame['frame_number']:06d}_camera{cam_num:02d}.jpg"
+                )
                 cv2.imwrite(str(output_frame_path), prev_frame)
 
                 # Move both pointers (video and timestamp)
@@ -119,10 +129,9 @@ def extract_frames_with_timestamps(input_dir, output_dir, timestamps):
     # Save timestamps as pandas DataFrame
     timestamps_array_1 = df(timestamps_array_1)
     timestamps_array_2 = df(timestamps_array_2)
-    
+
     timestamps_array_1.to_pickle(output_dir / "timestamps_camera1.pkl")
     timestamps_array_2.to_pickle(output_dir / "timestamps_camera2.pkl")
-    
 
 
 def main():

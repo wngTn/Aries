@@ -17,6 +17,12 @@ from projectaria_tools.core import calibration, data_provider, mps
 from projectaria_tools.core.image import InterpolationMethod
 from projectaria_tools.core.sensor_data import TimeDomain, TimeQueryOptions
 from projectaria_tools.core.stream_id import RecordableTypeId
+from projectaria_tools.core.mps.utils import (
+    filter_points_from_confidence,
+    get_gaze_vector_reprojection,
+    get_nearest_eye_gaze,
+    get_nearest_pose,
+)
 
 
 @dataclass
@@ -55,7 +61,8 @@ class AriaFrameProcessor:
         self.provider = self._initialize_provider()
         self.mps_data_provider = self._initialize_mps_provider()
         self.device_calib = self._initialize_calibration()
-
+        self.point_cloud = self._get_point_cloud()
+    
     def _initialize_provider(self) -> data_provider.VrsDataProvider:
         """Initialize the VRS data provider."""
         if not self.config.vrs_file.exists():
@@ -74,6 +81,14 @@ class AriaFrameProcessor:
             str(self.config.devignetting_mask_path)
         )
         return device_calib
+
+    def _get_point_cloud(self):
+        """Get point cloud data from the VRS file."""
+        points = self.mps_data_provider.get_semidense_point_cloud()
+        points = filter_points_from_confidence(points, threshold_invdep=0.01, threshold_dep=0.002))
+        # Retrieve point position
+        point_cloud = np.stack([it.position_world for it in points])
+        return point_cloud
 
     def process_frames(self, output_dirs: Dict[str, Path]) -> None:
         """
