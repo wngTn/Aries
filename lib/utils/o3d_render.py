@@ -18,7 +18,7 @@ def visualize_point_clouds(geometry_dict):
     app.add_window(vis)
     app.run()
 
-def get_camera_poses(cam_infos, size=0.5):
+def get_camera_poses(cam_infos, size=0.5, rotation=np.eye(3)):
     """
     Render camera poses as coordinate frames.
     This function takes a dictionary of camera information and generates
@@ -36,10 +36,12 @@ def get_camera_poses(cam_infos, size=0.5):
               values are the transformed coordinate frames as Open3D TriangleMesh
               objects.
     """
-    
+    # Create a 4x4 identity matrix
+    rotation_4x4 = np.eye(4)
+    rotation_4x4[:3, :3] = rotation.T
     camera_coordinate_frames = {}
     for cam_name, cam_info in cam_infos.items():
-        cam2world = cam_info['extrinsics']
+        cam2world = cam_info['extrinsics'] @ rotation_4x4
         mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=size, origin=[0, 0, 0])
         mesh_frame.transform(cam2world)
         camera_coordinate_frames[f"{cam_name}_pose"] = mesh_frame

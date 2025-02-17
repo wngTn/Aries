@@ -19,6 +19,7 @@ final_rotation = r2 * r1
 
 # Get the rotation matrix
 rotation_matrix = final_rotation.as_matrix()
+rotation_matrix = np.eye(3)
 
 
 def main():
@@ -39,11 +40,25 @@ def main():
         str(path_to_trial / "Orbbec" / "pointclouds_fused" / "pointcloud_000000.ply")
     )
     
-    geometry_dict["pcd"].points = o3d.utility.Vector3dVector(
-        np.array(geometry_dict["pcd"].points) @ rotation_matrix.T
+    # geometry_dict["pcd"].points = o3d.utility.Vector3dVector(
+    #     np.array(geometry_dict["pcd"].points) @ rotation_matrix.T
+    # )
+
+    aria_pcd = o3d.io.read_point_cloud(
+        "test.ply"
     )
 
-    camera_poses = get_camera_poses(cam_infos)
+    geometry_dict["aria_pcd"] = aria_pcd
+    aria2orbbec = np.array([
+        [-0.4226183295249939, 0.9063077569007874, -7.92319454490098e-08, -0.14000000059604645],
+        [0.9063077569007874, 0.4226183295249939, -3.694647077168156e-08, 0.25999999046325684],
+        [0.0, -8.742277657347586e-08, -1.0, -0.4399999976158142],
+        [0.0, 0.0, 0.0, 1.0]
+    ])
+    # Apply the 4x4 transformation matrix to the point cloud
+    geometry_dict["aria_pcd"].transform(aria2orbbec)
+
+    camera_poses = get_camera_poses(cam_infos, rotation=rotation_matrix)
     geometry_dict.update(camera_poses)
 
     visualize_point_clouds(geometry_dict)

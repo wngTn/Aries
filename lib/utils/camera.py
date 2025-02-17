@@ -107,7 +107,23 @@ def rotation_to_homogenous(vec):
     swap[3, 3] = 1
     return swap
 
+def convert_extrinsics(extrinsics):
+    # Extract the rotation matrix (3x3) and translation vector (3x1)
+    R = extrinsics[:3, :3]
+    t = extrinsics[:3, 3]
 
+    # Define the reflection matrix for flipping the Z-axis
+    reflection_matrix = np.diag([1, 1, -1])
+
+    # Apply the reflection to the rotation matrix and translation vector
+    R_new = np.dot(R, reflection_matrix)
+    t_new = np.dot(reflection_matrix, t)
+
+    # Construct the new extrinsic matrix
+    extrinsics_new = np.hstack((R_new, t_new.reshape(-1, 1)))
+    extrinsics_new = np.vstack((extrinsics_new, [0, 0, 0, 1]))
+
+    return extrinsics_new
 
 def load_cam_infos(take_path: Path) -> dict:
     """
@@ -164,6 +180,16 @@ def load_cam_infos(take_path: Path) -> dict:
             YZ_SWAP = rotation_to_homogenous(np.pi/2 * np.array([1, 0, 0]))
 
             extrinsics = YZ_SWAP @ extrinsics @ YZ_FLIP
+        else:
+            # transformation_matrix = np.array([[1, 0, 0, 0],
+            #                                 [0, 1, 0, 0],
+            #                                 [0, 0, -1, 0],
+            #                                 [0, 0, 0, 1]])
+            # extrinsics = np.matmul(transformation_matrix.T, extrinsics)
+            # make Z+ to Z-
+            # extrinsics[2, 3] = -extrinsics[2, 3]
+            extrinsics = extrinsics
+            # extrinsics = convert_extrinsics(extrinsics)
 
         color_params = cam_info['color_parameters']
         radial_params = tuple(color_params['radial_distortion'].values())

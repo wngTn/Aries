@@ -28,42 +28,96 @@ using namespace cv;
 using namespace aruco;
 using json = nlohmann::json;
 
+std::vector<cv::Point2f> detect_marker(const std::string& path_to_image)
+{
+    // Initialize return vector
+    std::vector<cv::Point2f> image2Dpoints;
+    
+    // Defining the ArUco marker dictionary
+    FractalDetector FDetector;
+    FDetector.setConfiguration("FRACTAL_4L_6");
+    Mat img = imread(path_to_image);
+    
+    // Check if the image was loaded successfully
+    if (img.empty())
+    {
+        cerr << "Error loading image: " << path_to_image << endl;
+        throw runtime_error("Error loading image");
+    }
+    
+    Mat gray;
+    // Convert the image to grayscale
+    cvtColor(img, gray, COLOR_BGR2GRAY);
+    
+    // Detect fractals in the image using FDetector
+    if (!FDetector.detect(gray))
+    {
+        cout << "No fractals detected in " << path_to_image << endl;
+        return image2Dpoints; // Return empty vector if no fractals detected
+    }
+    
+    for (const auto& m : FDetector.getMarkers())
+    {
+        if (m.id != 0) {
+            break;
+        }
+        cout << "Detected marker ID: " << m.id << endl;
+        
+        // Refine corners for accuracy
+        vector<Point2f> corners = m; // Assume `m` provides access to corner points
+        cornerSubPix(gray, corners, Size(11, 11), Size(-1, -1),
+                    TermCriteria(TermCriteria::EPS + TermCriteria::MAX_ITER, 30, 0.1));
+        
+        // Add each corner point individually to image2Dpoints
+        for (const auto& corner : corners) {
+            image2Dpoints.push_back(corner);
+        }
+    }
+    
+    return image2Dpoints;
+}
+
 void calibrate_camera(String path_to_images, String name_json_file, int camera_num, int num_images = -1)
 {
-    const float markerLength = 0.54f;  // Fixed marker length
-    
+    const float markerLength = 0.54f; // Fixed marker length
+
     // Path of the images (ArUco markers)
     vector<String> fileNames;
-    
+
     // Create the glob pattern for specific camera images
     String pattern = path_to_images + "*_camera" + format("%02d", camera_num) + ".jpg";
     cout << "Searching images in: " << pattern << endl;
-    
+
     glob(pattern, fileNames, false);
-    
-    if (fileNames.empty()) {
+
+    if (fileNames.empty())
+    {
         cerr << "No images found for camera " << camera_num << endl;
         return;
     }
-    
+
     // Handle image sampling
     vector<String> sampledFiles;
-    if (num_images == -1 || num_images >= fileNames.size()) {
+    if (num_images == -1 || num_images >= fileNames.size())
+    {
         sampledFiles = fileNames;
-    } else {
+    }
+    else
+    {
         // Ensure we don't try to sample more images than available
         num_images = min(num_images, static_cast<int>(fileNames.size()));
-        
+
         // Calculate sampling interval
         double step = static_cast<double>(fileNames.size()) / num_images;
-        
+
         // Perform uniform sampling
-        for (int i = 0; i < num_images; i++) {
+        for (int i = 0; i < num_images; i++)
+        {
             int index = static_cast<int>(i * step);
             sampledFiles.push_back(fileNames[index]);
         }
     }
-    
+
     cout << "Using " << sampledFiles.size() << " out of " << fileNames.size() << " available images for camera " << camera_num << endl;
 
     // Defining the ArUco marker dictionary
@@ -75,11 +129,16 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
 
     // 3D points for the marker (assuming all markers are in the XY plane)
     vector<Point3f> objPoints = {
-        Point3f(markerLength/2, 0, -markerLength/2),            // Bottom-left corner
-        Point3f(-markerLength/2, 0, -markerLength/2),           // Bottom-right corner
-        Point3f(-markerLength/2, 0, markerLength/2),            // Top-right corner
-        Point3f(markerLength/2, 0, markerLength/2),             // Top-left corner
+        Point3f(0, 0, 0),                       // Bottom-left corner
+        Point3f(markerLength, 0, 0),            // Bottom-right corner
+        Point3f(markerLength, markerLength, 0), // Top-right corner
+        Point3f(0, markerLength, 0)             // Top-left corner
     };
+    //     Point3f(markerLength/2, 0, -markerLength/2),            // Bottom-left corner
+    //     Point3f(-markerLength/2, 0, -markerLength/2),           // Bottom-right corner
+    //     Point3f(-markerLength/2, 0, markerLength/2),            // Top-right corner
+    //     Point3f(markerLength/2, 0, markerLength/2),             // Top-left corner
+    // };
 
     // Stores the 2D detected
     vector<vector<Point2f>> image2Dpoints;
@@ -98,10 +157,6 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
         // Convert the image to grayscale
         cvtColor(img, gray, COLOR_BGR2GRAY);
 
-        // Detect ArUco markers in the image
-        vector<int> markerIds;
-        vector<vector<Point2f>> markerCorners, rejectedCandidates;
-
         // Detect fractals in the image using FDetector
         if (!FDetector.detect(gray))
         {
@@ -112,14 +167,25 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
         /////////////////////////////////////////////////////////////
         // 1.2 Refining the corners detected to get accuracy
 
-        for (auto m : FDetector.getMarkers())
+        for (const auto &m : FDetector.getMarkers())
         {
+            if (m.id != 0)
+            {
+                break;
+            }
+
             cout << "Detected marker ID: " << m.id << endl;
 
             // Refine corners for accuracy
             vector<Point2f> corners = m; // Assume `m` provides access to corner points
             cornerSubPix(gray, corners, Size(11, 11), Size(-1, -1),
                          TermCriteria(TermCriteria::EPS + TermCriteria::MAX_ITER, 30, 0.1));
+
+            // Log corner points
+            for (const auto &c : corners)
+            {
+                cout << "Corner: " << c << endl;
+            }
 
             // Add the 2D points to the list
             image2Dpoints.push_back(corners);
@@ -133,13 +199,10 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
 
         FDetector.drawMarkers(img);
 
-        Mat image_resized;
-        resize(img, image_resized, Size(1500, 1000));
-
-        imshow("ArUco Marker Detection", image_resized);
+        imshow("ArUco Marker Detection", img);
         waitKey(0);
     }
-    
+
     Mat img = imread(sampledFiles[0]); // Read the first image to detect the size
     if (img.empty())
     {
@@ -156,8 +219,8 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
 
     // int flags = CALIB_FIX_ASPECT_RATIO + CALIB_FIX_K3 + CALIB_ZERO_TANGENT_DIST + CALIB_FIX_PRINCIPAL_POINT;
     // int flags = CALIB_FIX_K3 | CALIB_ZERO_TANGENT_DIST;
-    // int flags = 0;
-    int flags = CALIB_USE_INTRINSIC_GUESS;
+    // int flags = CALIB_USE_INTRINSIC_GUESS;
+    int flags = 0;
 
     if (img.empty())
     {
@@ -173,13 +236,55 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
     /////////////////////////////////////////////////////////////
     // 2.1 Calibration error, intrinsic matrix and distorsion coefficients
 
-    float error = calibrateCamera(realWorldPoints, image2Dpoints, frameSize,
-                                  intrinsicMatrix, distortionCoef, rotationVect,
-                                  translationVect, flags);
+    float error = calibrateCamera(
+        realWorldPoints,
+        image2Dpoints,
+        frameSize,
+        intrinsicMatrix,
+        distortionCoef,
+        rotationVect,
+        translationVect,
+        flags);
 
-    cout << "Calibration error: " << error << endl << endl;
-    // cout << "Intrinsic Matrix: " << endl << intrinsicMatrix << endl << endl;
-    // cout << "Distortion Coefficients: " << endl << distortionCoef << endl << endl;
+    cout << "Calibration error: " << error << endl
+         << endl;
+
+    ///////////////////////////////////////////////////////////////////////////
+    // 5. Correcting images to test the calibration accuracy
+
+    /////////////////////////////////////////////////////////////
+    // 5.1 Getting the fixed position of every pixel
+
+    // Correcting images to test the calibration accuracy
+    Mat mapX, mapY;
+    initUndistortRectifyMap(
+        intrinsicMatrix,
+        Mat(distortionCoef),
+        Matx33f::eye(),
+        intrinsicMatrix,
+        frameSize,
+        CV_32FC1,
+        mapX,
+        mapY);
+
+    /////////////////////////////////////////////////////////////
+    // 5.2 Show corrected images
+
+    for (const auto &file : sampledFiles)
+    {
+        cout << string(file) << endl;
+
+        Mat img = imread(file, IMREAD_COLOR);
+        Mat imgCorrected;
+
+        remap(img, imgCorrected, mapX, mapY, INTER_LINEAR);
+
+        // Mat image_resized;
+        // resize(imgCorrected, image_resized, Size(1500, 1000));
+
+        imshow("Corrected image ", imgCorrected);
+        waitKey(0);
+    }
 
     /////////////////////////////////////////////////////////////
     // 2.2 Metric radius
@@ -210,14 +315,23 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
         {"tangential_distortion", {{"m00", distortionCoef[2]}, {"m10", distortionCoef[3]}}},
         {"metric_radius", metric_radius}};
 
-    // Original code remains the same until the translation vector handling part
-
     ///////////////////////////////////////////////////////////////////////////
     // 4. Calculating and exporting camera pose to the JSON file
 
     // Get the first transformation matrices
-    Mat rotationVect_first = rotationVect[0];
-    Mat translationVect_first = translationVect[0];
+    // Mat rotationVect_first = rotationVect[0];
+    // Mat translationVect_first = translationVect[0];
+
+    Mat rotationVect_first, translationVect_first;
+
+    // 3D points for the marker (assuming all markers are in the XY plane)
+    vector<Point3f> markerPoints = {
+        Point3f(-markerLength / 2, -markerLength / 2, 0), // Bottom-left corner
+        Point3f(markerLength / 2, -markerLength / 2, 0),  // Bottom-right corner
+        Point3f(markerLength / 2, markerLength / 2, 0),   // Top-right corner
+        Point3f(-markerLength / 2, markerLength / 2, 0),  // Top-left corner
+    };
+    solvePnP(markerPoints, image2Dpoints[0], intrinsicMatrix, distortionCoef, rotationVect_first, translationVect_first);
 
     // Convertion to CV_64F to get accuracy, because often openCV returns CV_32F
     if (translationVect_first.type() != CV_64F)
@@ -285,53 +399,36 @@ void calibrate_camera(String path_to_images, String name_json_file, int camera_n
     json_file.close();
 
     cout << "File saved successfully" << endl;
-
-    ///////////////////////////////////////////////////////////////////////////
-    // 5. Correcting images to test the calibration accuracy
-
-    /////////////////////////////////////////////////////////////
-    // 5.1 Getting the fixed position of every pixel
-
-    // Correcting images to test the calibration accuracy
-    Mat mapX, mapY;
-    initUndistortRectifyMap(intrinsicMatrix, distortionCoef, Matx33f::eye(),
-                            intrinsicMatrix, frameSize, CV_32FC1, mapX, mapY);
-
-    /*
-     * mapX and mapY are the matrix that contain the fixed position of every
-     * pixel of the image to correct the distortion
-     *
-     * e.g. if the value of mapX[100, 50] = 98 and mapY[100, 50] = 49,
-     * the pixel in (100, 50) of the original image should be map into
-     * the position (98, 49)
-     */
-
-    /////////////////////////////////////////////////////////////
-    // 5.2 Show corrected images
-
-    for (const auto &file : sampledFiles)
-    {
-        cout << string(file) << endl;
-
-        Mat img = imread(file, IMREAD_COLOR);
-        Mat imgCorrected;
-
-        remap(img, imgCorrected, mapX, mapY, INTER_LINEAR);
-
-        // Mat image_resized;
-        // resize(imgCorrected, image_resized, Size(1500, 1000));
-
-        imshow("Corrected image ", imgCorrected);
-        waitKey(0);
-    }
 }
 
 // Exporting the function to Python
 PYBIND11_MODULE(calibration_module, m)
 {
-    m.doc() = "Camera calibration using ArUco markers";
-    m.def("calibrate_camera", &calibrate_camera, "Calibrate the camera",
-          pybind11::arg("path_to_images"), pybind11::arg("output_json"), pybind11::arg("marker_length"), pybind11::arg("num_images") = -1);
+    m.doc() = "Camera calibration and marker detection using ArUco markers";
+
+    // Convert OpenCV types to/from Python
+    pybind11::class_<cv::Point2f>(m, "Point2f")
+        .def(pybind11::init<float, float>())
+        .def_readwrite("x", &cv::Point2f::x)
+        .def_readwrite("y", &cv::Point2f::y);
+
+    // Add both functions to the same module
+    m.def("calibrate_camera", 
+          &calibrate_camera, 
+          "Calibrate the camera", 
+          pybind11::arg("path_to_images"), 
+          pybind11::arg("output_json"), 
+          pybind11::arg("camera_num"), 
+          pybind11::arg("num_images") = -1);
+
+    m.def("detect_marker",
+          &detect_marker,
+          "Detect ArUco markers in an image",
+          pybind11::arg("path_to_image"),
+          pybind11::return_value_policy::move);
+
+    // Register exception translation
+    pybind11::register_exception<std::runtime_error>(m, "RuntimeError");
 }
 
 int main(int argc, char **argv)
