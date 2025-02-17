@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import rootutils
 from copy import deepcopy
+import trimesh
 
 rootutils.setup_root(__file__, ".project-root", pythonpath=True, dotenv=True)
 
@@ -22,6 +23,18 @@ final_rotation = r1
 rotation_matrix = final_rotation.as_matrix()
 # rotation_matrix = np.eye(3)
 
+mesh = trimesh.load("simulation_board.stl")
+
+mesh_transformation = np.array([
+[1.0, 0.0, 0.0, -0.05888441950082779],
+        [0.0, -4.371138828673793e-08, -1.0, 0.19682589173316956],
+        [0.0, 1.0, -4.371138828673793e-08, -0.06605557352304459],
+        [0.0, 0.0, 0.0, 1.0]
+])
+
+mesh.apply_transform(mesh_transformation)
+
+pcd = trimesh.sample.sample_surface(mesh, 1000)[0]
 
 def main():
     path_to_trial = Path("data/recordings/20250206_Testing")
@@ -44,6 +57,7 @@ def main():
         [0.54/2, -0.54/2, 0],
         [-0.54/2, -0.54/2, 0],
     ])
+    points_3d = np.array(pcd)
     # points_3d = np.array([
     #     [0, 0, 0]
     # ])
@@ -86,9 +100,9 @@ def main():
             )
         
         # Draw lines between the points (if there are multiple points)
-        for i in range(len(points_2d)):
-            for j in range(i + 1, len(points_2d)):
-                cv2.line(img, points_2d[i], points_2d[j], (255, 0, 0), 2)
+        # for i in range(len(points_2d)):
+        #     for j in range(i + 1, len(points_2d)):
+        #         cv2.line(img, points_2d[i], points_2d[j], (255, 0, 0), 2)
 
         images.append(img)
         
