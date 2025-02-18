@@ -9,6 +9,7 @@ import random
 import json
 import math
 from scipy.spatial.transform import Rotation as R
+from aruco_ops import detect_marker
 
 # Constants
 COLORS = [
@@ -25,19 +26,6 @@ POINTS_3D = np.array([
     [-MARKER_SIZE / 2, MARKER_SIZE / 2, 0],
 ])
 ORIGIN_3D = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)  # Origin point for projection
-
-def setup_paths():
-    """Setup the calibration module path and return the base data path."""
-    # Add calibration module to path
-    calibration_path = Path("/Users/tonywang/Documents/hiwi/Aries/Code/Aries/lib/calibration/aruco-3.1.12/build/utils_calibration")
-    sys.path.append(str(calibration_path))
-    
-    # Import after path setup
-    global calibration_module
-    import calibration_module
-    
-    # Define base path for data
-    return Path("/Users/tonywang/Documents/hiwi/Aries/Code/Aries/data/recordings/20250206_Testing/Marshall/calibration/export")
 
 def get_camera_images(base_path: Path, camera_num: int) -> list[Path]:
     """Get all camera images for the specified camera number."""
@@ -69,7 +57,7 @@ def process_image(
     dist_coeffs: Optional[np.ndarray] = None,) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Process a single image by detecting markers and drawing circles."""
     img = cv2.imread(str(image_path))
-    points = calibration_module.detect_marker(str(image_path))
+    points = detect_marker(str(image_path))
     
     points_2d = None
     if len(points) == len(POINTS_3D):
@@ -189,7 +177,9 @@ def main():
                        help='Number of images to use for calibration (default: 20)')
     args = parser.parse_args()
     
-    base_path = setup_paths()
+    recording = "20250206_Testing"
+    
+    base_path = Path("data") / "recordings" / recording / "Marshall" / "calibration" / "export"
     image_paths = get_camera_images(base_path, args.camera_num)
     
     if not image_paths:
