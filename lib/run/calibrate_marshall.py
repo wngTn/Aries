@@ -25,6 +25,7 @@ POINTS_3D = np.array([
     [MARKER_SIZE / 2, MARKER_SIZE / 2, 0],
     [-MARKER_SIZE / 2, MARKER_SIZE / 2, 0],
 ])
+
 ORIGIN_3D = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)  # Origin point for projection
 
 def get_camera_images(base_path: Path, camera_num: int) -> list[Path]:
@@ -51,10 +52,7 @@ def draw_axes(img: np.ndarray, camera_matrix: np.ndarray, dist_coeffs: np.ndarra
     return img
 
 def process_image(
-    image_path: Path, 
-    output_path: Path = None, 
-    camera_matrix: Optional[np.ndarray] = None, 
-    dist_coeffs: Optional[np.ndarray] = None,) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    image_path: Path) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Process a single image by detecting markers and drawing circles."""
     img = cv2.imread(str(image_path))
     points = detect_marker(str(image_path))
@@ -66,19 +64,13 @@ def process_image(
     for i, point in enumerate(points):
         cv2.circle(img, (int(point.x), int(point.y)), 5, COLORS[i % len(COLORS)], thickness=-1)
     
-    if output_path and camera_matrix is not None and dist_coeffs is not None and points_2d is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Process undistorted image
-        undistorted_img = cv2.undistort(img, camera_matrix, dist_coeffs)
-        undistorted_path = output_path.parent / f"undistorted_{output_path.name}" 
-        cv2.imwrite(str(undistorted_path), undistorted_img)
-    
     return img, points_2d
 
 def calibrate_camera(images_2d: List[np.ndarray], num_calibration_images: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Calibrate camera using detected 2D points and known 3D points."""
-    if len(images_2d) > num_calibration_images:
+    if num_calibration_images <= 0:
+        images_2d = images_2d
+    elif len(images_2d) > num_calibration_images:
         selected_indices = random.sample(range(len(images_2d)), num_calibration_images)
         images_2d = [images_2d[i] for i in selected_indices]
     
@@ -106,8 +98,8 @@ def save_calibration_json(camera_num: int, camera_matrix: np.ndarray, dist_coeff
     # Get image dimensions
     height, width = 1080, 1920 # Update these values if different
     
-    # Calculate metric radius (you may want to adjust this calculation)
-    metric_radius = np.sqrt(width*width + height*height) / 2.0
+    # Just some placeholder
+    metric_radius = -1
     
     # Create calibration data structure
     calibration_data = {
@@ -163,7 +155,7 @@ def save_calibration_json(camera_num: int, camera_matrix: np.ndarray, dist_coeff
     }
     
     # Save to JSON file
-    output_file = output_dir / f"camera_params_{camera_num:02d}.json"
+    output_file = output_dir / f"camera_{camera_num + 4:02d}.json"
     with open(output_file, 'w') as f:
         json.dump(calibration_data, f, indent=4)
     
@@ -173,8 +165,7 @@ def main():
     parser = argparse.ArgumentParser(description='Process camera images for Aruco marker detection and calibration')
     parser.add_argument('--camera_num', default=1, type=int, help='Camera number to process')
     parser.add_argument('--viz', default=True, action='store_true', help='Save debug visualizations')
-    parser.add_argument('--num-images', type=int, default=200,
-                       help='Number of images to use for calibration (default: 20)')
+    parser.add_argument('--num-images', type=int, default=20, help='Number of images to use for calibration')
     args = parser.parse_args()
     
     recording = "20250206_Testing"
@@ -187,16 +178,17 @@ def main():
         return
     
     valid_points_2d = []
+    valid_imgs = []
     camera_matrix = None
     dist_coeffs = None
     
     # First pass to collect valid points for calibration
     for image_path in image_paths:
-        print(f"Processing {image_path.name} (first pass)")
-        _, points_2d = process_image(image_path)
+        img, points_2d = process_image(image_path)
         
         if points_2d is not None:
             valid_points_2d.append(points_2d)
+            valid_imgs.append(img)
     
     print(f"\nFound {len(valid_points_2d)} images with all points detected")
     
@@ -218,29 +210,22 @@ def main():
         useExtrinsicGuess=True,
         flags=cv2.SOLVEPNP_ITERATIVE
     )
-    
+
     # Second pass to create visualization with origin projection
     if args.viz:
-        for i, image_path in enumerate(image_paths):
-            print(f"Processing {image_path.name} (second pass with origin projection)")
-            output_path = Path("output/debug/marshall") / image_path.name
-            # Only project origin for images that were used in calibration
-            if i < len(rvecs):
-                process_image(image_path, output_path, camera_matrix, dist_coeffs)
+        output_path = Path("output/debug/marshall")
+        output_path.mkdir(parents=True, exist_ok=True)
+        # Randomly sample 10 images for visualization
+        random.seed(42)
+        images_with_annotation = random.sample(valid_imgs, min(10, len(valid_imgs)))
+        for i, img_with_annotation in enumerate(images_with_annotation):
+            undistorted_img = cv2.undistort(img_with_annotation, camera_matrix, dist_coeffs)
+            cv2.imwrite(str(output_path / f"camera{args.camera_num:02d}_undistorted_{i:02d}.jpg"), undistorted_img)
     
     # Save results
-    output_dir = Path("output/calibration")
+    output_dir = Path("data") / "recordings" / recording / "calibration"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save traditional NPY files
-    np.save(output_dir / f"camera_matrix_{args.camera_num:02d}.npy", camera_matrix)
-    np.save(output_dir / f"dist_coeffs_{args.camera_num:02d}.npy", dist_coeffs)
 
-    # p = cv2.projectPoints(POINTS_3D, rvec, tvec, camera_matrix, dist_coeffs)
-    # img = cv2.imread(str(image_paths[0]))
-    # for point in p[0]:
-    #     cv2.circle(img, (int(point[0][0]), int(point[0][1])), 5, (0, 255, 0), thickness=-1)
-    
     # Save JSON format with quaternions (using first frame's pose)
     save_calibration_json(args.camera_num, camera_matrix, dist_coeffs[0], 
                          rvec, tvec, output_dir)

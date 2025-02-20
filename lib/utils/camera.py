@@ -180,16 +180,6 @@ def load_cam_infos(take_path: Path) -> dict:
             YZ_SWAP = rotation_to_homogenous(np.pi/2 * np.array([1, 0, 0]))
 
             extrinsics = YZ_SWAP @ extrinsics @ YZ_FLIP
-        else:
-            # transformation_matrix = np.array([[1, 0, 0, 0],
-            #                                 [0, 1, 0, 0],
-            #                                 [0, 0, -1, 0],
-            #                                 [0, 0, 0, 1]])
-            # extrinsics = np.matmul(transformation_matrix.T, extrinsics)
-            # make Z+ to Z-
-            # extrinsics[2, 3] = -extrinsics[2, 3]
-            extrinsics = extrinsics
-            # extrinsics = convert_extrinsics(extrinsics)
 
         color_params = cam_info['color_parameters']
         radial_params = tuple(color_params['radial_distortion'].values())

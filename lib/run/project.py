@@ -13,26 +13,26 @@ from scipy.spatial.transform import Rotation
 from lib.utils.camera import load_cam_infos, project_to_2d
 from lib.utils.image import undistort_image
 
-r1 = Rotation.from_euler("x", 90, degrees=True)
-r2 = Rotation.from_euler("y", 180, degrees=True)
+COLORS = [
+    (255, 0, 0), # Red
+    (0, 255, 0), # Green
+    (0, 0, 255), # Blue
+    (128, 0, 128), # Purple 
+]
 
-# Combine the rotations
-final_rotation = r1
-
-# Get the rotation matrix
-rotation_matrix = final_rotation.as_matrix()
-# rotation_matrix = np.eye(3)
+# Rotation matrix for marshall cameras. Rotate -90 degrees around x-axis
+marshall_rotation = Rotation.from_euler("x", -90, degrees=True).as_matrix()
 
 mesh = trimesh.load("simulation_board.stl")
 
-mesh_transformation = np.array([
-[1.0, 0.0, 0.0, -0.05888441950082779],
-        [0.0, -4.371138828673793e-08, -1.0, 0.19682589173316956],
-        [0.0, 1.0, -4.371138828673793e-08, -0.06605557352304459],
-        [0.0, 0.0, 0.0, 1.0]
-])
+# mesh_transformation = np.array([
+# [1.0, 0.0, 0.0, -0.05888441950082779],
+#         [0.0, -4.371138828673793e-08, -1.0, 0.19682589173316956],
+#         [0.0, 1.0, -4.371138828673793e-08, -0.06605557352304459],
+#         [0.0, 0.0, 0.0, 1.0]
+# ])
 
-mesh.apply_transform(mesh_transformation)
+# mesh.apply_transform(mesh_transformation)
 
 pcd = trimesh.sample.sample_surface(mesh, 1000)[0]
 
@@ -40,8 +40,6 @@ def main():
     path_to_trial = Path("data/recordings/20250206_Testing")
 
     cameras = ["camera01", "camera02", "camera03", "camera04", "camera05", "camera06"]
-    # cameras = cameras[:2]
-    # cameras = cameras[-2:]
     images = []
 
     # Load camera information
@@ -52,12 +50,14 @@ def main():
     
 
     points_3d = np.array([
-        [0.54, 0.54/2, 0],
-        [-0.54, 0.54/2, 0],
-        [0.54/2, -0.54/2, 0],
-        [-0.54/2, -0.54/2, 0],
-    ])
-    points_3d = np.array(pcd)
+        [0.54, 1, 0.54],
+        [-0.54, 1, 0.54],
+        [-0.54, 1, -0.54],
+        [0.54, 1, -0.54],
+    ]) / 2
+
+
+    # points_3d = np.array(pcd)
     # points_3d = np.array([
     #     [0, 0, 0]
     # ])
@@ -70,18 +70,18 @@ def main():
                 str(marshall_path / f"color_000000_camera{cam_id-4:02d}.jpg")
             )
             img = cv2.undistort(img, cam_params['intrinsics'], np.array([cam_params['radial_params'][0]] + [cam_params['radial_params'][1]] + list(cam_params['tangential_params'][:2]) + [cam_params['radial_params'][2]] + [0, 0, 0]))
-            _points_3d = deepcopy(points_3d)
+            _points_3d = deepcopy(points_3d) @ marshall_rotation.T
         else:
             img = cv2.imread(
                 str(orrbec_path / f"color_000000_camera{cam_id:02d}.jpg")
             )
             img = undistort_image(img, cam_params, 'color')
-            _points_3d = deepcopy(points_3d) @ rotation_matrix.T
+            _points_3d = deepcopy(points_3d)
             
         # List to store the 2D points on the image
         points_2d = []
 
-        for point_3d in _points_3d:
+        for i, point_3d in enumerate(_points_3d):
             # Project 3D point to 2D image coordinates
             point_2d = project_to_2d(
                 point_3d, cam_params["intrinsics"], np.linalg.inv(cam_params["extrinsics"]) if cam_id < 5 else cam_params["extrinsics"]
@@ -94,15 +94,15 @@ def main():
             cv2.circle(
                 img,
                 (int(point_2d[0]), int(point_2d[1])),
-                5,
-                (0, 255, 0),
+                10,
+                COLORS[i],
                 thickness=-1,
             )
         
         # Draw lines between the points (if there are multiple points)
-        # for i in range(len(points_2d)):
-        #     for j in range(i + 1, len(points_2d)):
-        #         cv2.line(img, points_2d[i], points_2d[j], (255, 0, 0), 2)
+        for i in range(len(points_2d)):
+            for j in range(i + 1, len(points_2d)):
+                cv2.line(img, points_2d[i], points_2d[j], (255, 0, 0), 2)
 
         images.append(img)
         
