@@ -34,6 +34,23 @@ mesh = trimesh.load("simulation_board.stl")
 
 # mesh.apply_transform(mesh_transformation)
 
+hand_points = np.load("/Users/tonywang/Documents/hiwi/Aries/Code/Aries/data/recordings/20250206_Testing/Aria/export/hand/hand_000000.npy", allow_pickle=True).item()
+
+points_3d_aria_world = np.array([v for k, v in hand_points.items() if not "normal" in k])
+points_3d_aria_world = np.concatenate([points_3d_aria_world, np.ones((points_3d_aria_world.shape[0], 1))], axis=1).T
+
+aria2orbbec = np.array([[-0.8748278021812439, -0.4844340682029724, 1.0859806565122199e-07, -0.26741909980773926],
+        [7.647987843029114e-08, 8.606196644223019e-08, 1.0, 0.4549257457256317],
+        [-0.4844340682029724, 0.8748278021812439, -3.823993921514557e-08, -0.14493417739868164],
+        [0.0, 0.0, 0.0, 1.0]])
+
+points_orbbec = aria2orbbec @ points_3d_aria_world
+points_3d = points_orbbec[:3].T
+
+# swap x and z axis
+aria_rotation = Rotation.from_euler("y", 90, degrees=True).as_matrix()
+points_3d = points_3d @ aria_rotation.T
+
 pcd = trimesh.sample.sample_surface(mesh, 1000)[0]
 
 def main():
@@ -49,12 +66,12 @@ def main():
     orrbec_path = Path(f"{path_to_trial}/Orbbec/color")
     
 
-    points_3d = np.array([
-        [0.54, 1, 0.54],
-        [-0.54, 1, 0.54],
-        [-0.54, 1, -0.54],
-        [0.54, 1, -0.54],
-    ]) / 2
+    # points_3d = np.array([
+    #     [0.54, 1, 0.54],
+    #     [-0.54, 1, 0.54],
+    #     [-0.54, 1, -0.54],
+    #     [0.54, 1, -0.54],
+    # ]) / 2
 
 
     # points_3d = np.array(pcd)
@@ -95,14 +112,14 @@ def main():
                 img,
                 (int(point_2d[0]), int(point_2d[1])),
                 10,
-                COLORS[i],
+                COLORS[i % len(COLORS)],
                 thickness=-1,
             )
         
         # Draw lines between the points (if there are multiple points)
-        for i in range(len(points_2d)):
-            for j in range(i + 1, len(points_2d)):
-                cv2.line(img, points_2d[i], points_2d[j], (255, 0, 0), 2)
+        # for i in range(len(points_2d)):
+        #     for j in range(i + 1, len(points_2d)):
+        #         cv2.line(img, points_2d[i], points_2d[j], (255, 0, 0), 2)
 
         images.append(img)
         

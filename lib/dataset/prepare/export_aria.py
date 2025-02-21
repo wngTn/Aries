@@ -24,6 +24,12 @@ from projectaria_tools.core.mps.utils import (
     get_nearest_eye_gaze,
     get_nearest_pose,
 )
+import matplotlib.pyplot as plt
+import rootutils
+
+rootutils.setup_root(__file__, ".project-root", pythonpath=True)
+
+from lib.dataset.prepare.aria_utils import get_T_device_sensor, get_point_reprojection, get_wrist_and_palm_pixels, plot_wrists_and_palms
 
 
 @dataclass
@@ -246,24 +252,29 @@ class AriaFrameProcessor:
             print(f"Warning: No image data found for frame {frame_number}")
             return
         
-        T_device_RGB = self.provider.get_device_calibration().get_transform_device_sensor(
-            "camera-rgb"
-        )
-        transform_world_device = self.mps_data_provider.get_open_loop_pose(int(device_timestamp * 1000), TimeQueryOptions.CLOSEST).transform_odometry_device.to_matrix()
-        transform_world_rgb = transform_world_device @ T_device_RGB.to_matrix()
-        aria2orbbec = np.array([
-        [-0.4756242632865906, 0.8796485662460327, -7.690132264315253e-08, -0.1599999964237213],
-        [0.8796485662460327, 0.4756242632865906, -4.1580396015206134e-08, 0.23999999463558197],
-        [0.0, -8.742277657347586e-08, -1.0, -0.4399999976158142],
-        [0.0, 0.0, 0.0, 1.0]
-        ])
-        x = np.array([0, 0, 0, 1])
-        x = np.linalg.inv(aria2orbbec) @ x
-        pos = self.mps_data_provider.get_online_calibration(int(device_timestamp * 1000), TimeQueryOptions.CLOSEST).camera_calibs[2].project((np.linalg.inv(transform_world_rgb) @ x)[:3])
+        # [INFO] Get wrist and palm pose
+        transform_world_device = self.mps_data_provider.get_closed_loop_pose(int(device_timestamp * 1000), TimeQueryOptions.CLOSEST).transform_world_device.to_matrix()
+        wrist_and_palm_pose = self.mps_data_provider.get_wrist_and_palm_pose(int(device_timestamp * 1000), TimeQueryOptions.CLOSEST)
+
+        hand_information = {
+            "left_wrist": wrist_and_palm_pose.left_hand.wrist_position_device,
+            "left_palm": wrist_and_palm_pose.left_hand.palm_position_device,
+            "right_wrist": wrist_and_palm_pose.right_hand.wrist_position_device,
+            "right_palm": wrist_and_palm_pose.right_hand.palm_position_device,
+            "left_wrist_normal": wrist_and_palm_pose.left_hand.wrist_and_palm_normal_device.wrist_normal_device,
+            "left_palm_normal": wrist_and_palm_pose.left_hand.wrist_and_palm_normal_device.palm_normal_device,
+            "right_wrist_normal": wrist_and_palm_pose.right_hand.wrist_and_palm_normal_device.wrist_normal_device,
+            "right_palm_normal": wrist_and_palm_pose.right_hand.wrist_and_palm_normal_device.palm_normal_device
+        }
+
+        # Transform to world coordinate system
+        for key in hand_information.keys():
+            if hand_information[key] is not None:
+                hand_information[key] = (transform_world_device @ np.r_[hand_information[key], [1]])[:3]
 
         raw_image = image_data[0].to_numpy_array()
         
-        cv2.circle(raw_image, pos.astype(np.int32), 10, (255, 0, 0), -1)
+        # cv2.circle(raw_image, pos.astype(np.int32), 10, (255, 0, 0), -1)
         
         processed_image = self._transform_image(
             raw_image, devignetting_mask, dst_calib, src_calib
@@ -271,7 +282,8 @@ class AriaFrameProcessor:
 
         # output_path = output_dir / f"color_{frame_number:06d}_camera07.jpg"
         output_path = f"color_{int(frame_number):06d}_camera07.jpg"
-        Image.fromarray(processed_image).save(output_path)
+        # Image.fromarray(processed_image).save(output_path)
+        np.save(f"data/recordings/20250206_Testing/Aria/export/hand/hand_{int(frame_number):06d}.npy", hand_information)
 
     def _transform_image(
         self,
