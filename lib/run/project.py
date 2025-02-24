@@ -21,7 +21,7 @@ COLORS = [
 ]
 
 # Rotation matrix for marshall cameras. Rotate -90 degrees around x-axis
-marshall_rotation = Rotation.from_euler("x", -90, degrees=True).as_matrix()
+T_orbbec_marshall = Rotation.from_euler("x", -90, degrees=True).as_matrix()
 
 mesh = trimesh.load("simulation_board.stl")
 
@@ -39,12 +39,13 @@ hand_points = np.load("/Users/tonywang/Documents/hiwi/Aries/Code/Aries/data/reco
 points_3d_aria_world = np.array([v for k, v in hand_points.items() if not "normal" in k])
 points_3d_aria_world = np.concatenate([points_3d_aria_world, np.ones((points_3d_aria_world.shape[0], 1))], axis=1).T
 
-aria2orbbec = np.array([[-0.8748278021812439, -0.4844340682029724, 1.0859806565122199e-07, -0.26741909980773926],
+T_orbbec_aria = np.array(
+    [[-0.8748278021812439, -0.4844340682029724, 1.0859806565122199e-07, -0.26741909980773926],
         [7.647987843029114e-08, 8.606196644223019e-08, 1.0, 0.4549257457256317],
         [-0.4844340682029724, 0.8748278021812439, -3.823993921514557e-08, -0.14493417739868164],
         [0.0, 0.0, 0.0, 1.0]])
 
-points_orbbec = aria2orbbec @ points_3d_aria_world
+points_orbbec = T_orbbec_aria @ points_3d_aria_world
 points_3d = points_orbbec[:3].T
 
 # swap x and z axis
@@ -87,7 +88,9 @@ def main():
                 str(marshall_path / f"color_000000_camera{cam_id-4:02d}.jpg")
             )
             img = cv2.undistort(img, cam_params['intrinsics'], np.array([cam_params['radial_params'][0]] + [cam_params['radial_params'][1]] + list(cam_params['tangential_params'][:2]) + [cam_params['radial_params'][2]] + [0, 0, 0]))
-            _points_3d = deepcopy(points_3d) @ marshall_rotation.T
+            # [INFO] points_3d.shape = (N, 3)
+            _points_3d = (T_orbbec_marshall @ deepcopy(points_3d).T).T
+            T_marshall_orbbec = np.linalg.inv(T_orbbec_marshall)
         else:
             img = cv2.imread(
                 str(orrbec_path / f"color_000000_camera{cam_id:02d}.jpg")
@@ -137,8 +140,9 @@ def main():
         col = idx % num_columns
         canvas[row * height:(row + 1) * height, col * width:(col + 1) * width, :] = img
 
-    cv2.imshow("image", canvas)
-    cv2.waitKey(0)
+    # cv2.imshow("image", canvas)
+    # cv2.waitKey(0)
+    cv2.imwrite("test.jpg", canvas)
 
 
 if __name__ == "__main__":
