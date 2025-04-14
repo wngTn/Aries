@@ -215,7 +215,7 @@ def create_collage(images, format=None, downscale_factor=2, frame_index=None):
         cv2.putText(
             canvas,
             f"Frame {frame_index}",
-            (canvas_width - 150, canvas_height - 20),
+            (10, canvas_height - 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
             (255, 255, 255),
