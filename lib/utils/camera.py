@@ -169,6 +169,7 @@ def load_cam_infos(take_path: Path) -> dict:
         intrinsics[2, 2] = 1
         extrinsics = load_transform_matrix(cam_info['camera_pose']['translation'], cam_info['camera_pose']['rotation'])
 
+        # [INFO] Orbbec Cameras
         if 'color2depth_transform' in cam_info:
             color2depth_transform = load_transform_matrix(cam_info['color2depth_transform']['translation'],
                                                         cam_info['color2depth_transform']['rotation'])
@@ -180,6 +181,13 @@ def load_cam_infos(take_path: Path) -> dict:
             YZ_SWAP = rotation_to_homogenous(np.pi/2 * np.array([1, 0, 0]))
 
             extrinsics = YZ_SWAP @ extrinsics @ YZ_FLIP
+
+        # [INFO] Transform the Marshall Cameras
+        else:
+            T_marshall_orbbec = np.eye(4)
+            T_marshall_orbbec[:3, :3] = Rotation.from_euler("x", 90, degrees=True).as_matrix()
+            extrinsics = np.linalg.inv(extrinsics)
+            extrinsics = T_marshall_orbbec @ extrinsics
 
         color_params = cam_info['color_parameters']
         radial_params = tuple(color_params['radial_distortion'].values())
