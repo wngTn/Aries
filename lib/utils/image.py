@@ -4,6 +4,7 @@ from typing import Dict, List, Union
 from pathlib import Path
 import cv2
 import tqdm
+import math
 
 def point_cloud_from_images(
     color_image_path: Union[str, Path],
@@ -173,7 +174,7 @@ def create_collage(images, format=None, downscale_factor=2, frame_index=None):
         num_images = len(downscaled_images)
         format = [(num_images + 1) // 2, num_images // 2]
     else:
-        if sum(format) != len(images):
+        if math.prod(format) < len(images):
             raise ValueError(
                 f"Format {format} sum ({sum(format)}) doesn't match number of images ({len(images)})"
             )

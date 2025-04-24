@@ -7,7 +7,6 @@ import rootutils
 
 rootutils.setup_root(__file__, ".project-root", pythonpath=True, dotenv=True)
 
-
 from lib.utils.camera import load_cam_infos, project_to_2d
 from lib.utils.image import undistort_image
 
