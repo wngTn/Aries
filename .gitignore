@@ -1,5 +1,8 @@
 data/recordings
 data/sample_images
+data/**
+body_models
+
 
 **/**.DS_Store
 **/*.pt

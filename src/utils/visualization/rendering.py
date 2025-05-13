@@ -1,15 +1,10 @@
-# -*- coding: utf-8 -*-
-# @Time    : 2024/10/14
-# @Author  : wenshao
-# @Project : WiLoR-mini
-# @FileName: test_wilor_pipeline.py
 import os
-import time
 
 import numpy as np
 import pyrender
 import torch
 import trimesh
+
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 
@@ -275,64 +270,3 @@ class Renderer:
             if scene.has_node(node):
                 continue
             scene.add_node(node)
-
-
-def test_wilor_image_pipeline():
-    import cv2
-    import numpy as np
-    import torch
-    from wilor_mini.pipelines.wilor_hand_pose3d_estimation_pipeline import WiLorHandPose3dEstimationPipeline
-
-    LIGHT_PURPLE = (0.25098039, 0.274117647, 0.65882353)
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    dtype = torch.float16
-
-    pipe = WiLorHandPose3dEstimationPipeline(device=device, dtype=dtype, verbose=False)
-    img_path = "assets/data/20250206_Testing/Marshall/export/color_000400_camera02.jpg"
-    image = cv2.imread(img_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    for _ in range(1):
-        t0 = time.time()
-        outputs = pipe.predict(image)
-        print(time.time() - t0)
-    save_dir = "./results"
-    os.makedirs(save_dir, exist_ok=True)
-    renderer = Renderer(pipe.wilor_model.mano.faces)
-
-    render_image = image.copy()
-    render_image = render_image.astype(np.float32)[:, :, ::-1] / 255.0
-    pred_keypoints_2d_all = []
-    for i, out in enumerate(outputs):
-        verts = out["wilor_preds"]["pred_vertices"][0]
-        is_right = out["is_right"]
-        cam_t = out["wilor_preds"]["pred_cam_t_full"][0]
-        scaled_focal_length = out["wilor_preds"]["scaled_focal_length"]
-        pred_keypoints_2d = out["wilor_preds"]["pred_keypoints_2d"]
-        pred_keypoints_2d_all.append(pred_keypoints_2d)
-        misc_args = dict(
-            mesh_base_color=LIGHT_PURPLE,
-            scene_bg_color=(1, 1, 1),
-            focal_length=scaled_focal_length,
-        )
-        tmesh = renderer.vertices_to_trimesh(verts, cam_t.copy(), LIGHT_PURPLE, is_right=is_right)
-        tmesh.export(os.path.join(save_dir, f"{os.path.basename(img_path)}_hand{i:02d}.obj"))
-        cam_view = renderer.render_rgba(
-            verts, cam_t=cam_t, render_res=[image.shape[1], image.shape[0]], is_right=is_right, **misc_args
-        )
-
-        # Overlay image
-        render_image = render_image[:, :, :3] * (1 - cam_view[:, :, 3:]) + cam_view[:, :, :3] * cam_view[:, :, 3:]
-
-    render_image = (255 * render_image).astype(np.uint8)
-    for pred_keypoints_2d in pred_keypoints_2d_all:
-        for j in range(pred_keypoints_2d[0].shape[0]):
-            color = (0, 0, 255)
-            radius = 3
-            x, y = pred_keypoints_2d[0][j]
-            cv2.circle(render_image, (int(x), int(y)), radius, color, -1)
-    cv2.imwrite(os.path.join(save_dir, os.path.basename(img_path)), render_image)
-    print(os.path.join(save_dir, os.path.basename(img_path)))
-
-if __name__ == "__main__":
-    test_wilor_image_pipeline()
-    # test_wilor_video_pipeline()
