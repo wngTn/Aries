@@ -1,3 +1,58 @@
+[project]
+name = "aries"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.10.16"
+dependencies = [
+    "torch==2.3.1",
+    "torchvision==0.18.1",
+    "lightning==2.4",
+    "matplotlib==3.9.2",
+    "einops==0.8.1",
+    "trimesh>=4.6.8",
+    "opencv-python>=4.11.0.86",
+    "smplx>=0.1.28",
+    "h5py>=3.13.0",
+    "pyrender>=0.1.45",
+    "ipdb>=0.13.13",
+    "wandb[media]",
+    "rich",
+    "rootutils",
+    "imageio[ffmpeg]",
+    "clip",
+    "human_body_prior",
+    "hydra-core",
+    "hydra-optuna-sweeper",
+    "hydra-colorlog",
+    # "pytorch3d"
+    "pytorch-warmup>=0.2.0",
+    "transformers>=4.51.3",
+    "numpy>=2.2.5",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu118" }  # Remove the marker since you're on Linux
+]
+torchvision = [
+    { index = "pytorch-cu118" }  # Remove the marker since you're on Linux
+]
+pytorch3d = [
+    { git = "https://github.com/facebookresearch/pytorch3d.git" },
+]
+clip = [
+    { git = "https://github.com/openai/CLIP.git" },
+]
+human_body_prior = [
+    { git = "https://github.com/nghorbani/human_body_prior.git"}
+]
+
 [tool.ruff]
 line-length = 120
 ignore = ["E402"]
