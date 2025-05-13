@@ -1,6 +1,9 @@
 data/recordings
 data/sample_images
 
+**/**.DS_Store
+**/*.pt
+
 *.jpg
 
 **/build/**
