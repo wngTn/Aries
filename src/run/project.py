@@ -7,7 +7,7 @@ import rootutils
 
 rootutils.setup_root(__file__, ".project-root", pythonpath=True, dotenv=True)
 
-from src.utils.camera import load_cam_infos, project_to_2d
+from src.utils.camera import load_cam_infos, project_to_2d_np
 from src.utils.image import undistort_image
 
 COLORS = [
@@ -28,6 +28,7 @@ points_3d = (
     )
     / 2
 )
+
 
 def main():
     path_to_trial = Path("data/recordings/20250206_Testing")
@@ -71,7 +72,7 @@ def main():
 
         for i, point_3d in enumerate(_points_3d):
             # Project 3D point to 2D image coordinates
-            point_2d = project_to_2d(
+            point_2d = project_to_2d_np(
                 point_3d,
                 cam_params["intrinsics"],
                 np.linalg.inv(cam_params["extrinsics"]),

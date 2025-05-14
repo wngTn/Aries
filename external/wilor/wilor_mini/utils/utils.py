@@ -135,15 +135,78 @@ def generate_image_patch_cv2(img: np.array, c_x: float, c_y: float,
     return img_patch, trans
 
 
-def cam_crop_to_full(cam_bbox, box_center, box_size, img_size, focal_length=5000.):
-    # Convert cam_bbox to full image
+def cam_crop_to_full(cam_bbox, box_center, box_size, img_size, focal_length=5000.0, camera_center=None):
+    """
+    Convert camera parameters from crop coordinates to full image coordinates.
+
+    Args:
+        cam_bbox (np.ndarray): Camera parameters for the cropped image, shape (B, 3)
+        box_center (np.ndarray): Centers of the bounding boxes, shape (B, 2)
+        box_size (np.ndarray or float): Size of the bounding boxes
+        img_size (np.ndarray): Full image dimensions [width, height], shape (B, 2)
+        focal_length (np.ndarray or float): Focal length(s). Can be:
+            - Single float value (used for both x and y)
+            - Array of shape (2,) with [fx, fy]
+            - Array of shape (B, 2) with per-batch [fx, fy]
+        camera_center (np.ndarray, optional): Camera center coordinates. If None,
+            uses the center of the image. Can be:
+            - None (defaults to image center)
+            - Array of shape (2,) with [cx, cy]
+            - Array of shape (B, 2) with per-batch [cx, cy]
+
+    Returns:
+        np.ndarray: Full image camera translation parameters, shape (B, 3)
+    """
+    # Handle image dimensions
     img_w, img_h = img_size[:, 0], img_size[:, 1]
-    cx, cy, b = box_center[:, 0], box_center[:, 1], box_size
-    w_2, h_2 = img_w / 2., img_h / 2.
+    batch_size = cam_bbox.shape[0]
+
+    # Process camera center
+    if camera_center is None:
+        # Default to image center
+        w_2, h_2 = img_w / 2.0, img_h / 2.0
+    else:
+        # Convert to correct shape if needed
+        if len(camera_center.shape) == 1:
+            # Single camera center for all batches
+            camera_center = np.tile(camera_center[None, :], (batch_size, 1))
+        w_2, h_2 = camera_center[:, 0], camera_center[:, 1]
+
+    # Process focal length
+    if np.isscalar(focal_length):
+        # Single focal length value for both x and y
+        fx = fy = focal_length
+    else:
+        if len(focal_length.shape) == 1:
+            # Single pair of focal lengths for all batches
+            if focal_length.shape[0] == 1:
+                fx = fy = focal_length[0]
+            else:
+                fx, fy = focal_length[0], focal_length[1]
+                # Expand to batch size
+                fx = np.full(batch_size, fx)
+                fy = np.full(batch_size, fy)
+        else:
+            # Batch of focal lengths
+            fx, fy = focal_length[:, 0], focal_length[:, 1]
+
+    # Get bounding box parameters
+    cx, cy = box_center[:, 0], box_center[:, 1]
+    b = box_size
+
+    # Scale factor from the camera model
     bs = b * cam_bbox[:, 0] + 1e-9
-    tz = 2 * focal_length / bs
+
+    # Calculate camera translation parameters
+    tz_x = 2 * fx / bs
+    tz_y = 2 * fy / bs
+    # Use average of x and y components for depth
+    tz = (tz_x + tz_y) / 2.0
+
     tx = (2 * (cx - w_2) / bs) + cam_bbox[:, 1]
     ty = (2 * (cy - h_2) / bs) + cam_bbox[:, 2]
+
+    # Stack to create full camera parameters
     full_cam = np.stack([tx, ty, tz], axis=-1)
     return full_cam
 

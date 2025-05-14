@@ -1,7 +1,8 @@
-from pathlib import Path
-from scipy.spatial.transform import Rotation
 import json
+from pathlib import Path
+import torch
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 
 def load_rotation_matrix(rot: dict) -> np.ndarray:
@@ -27,7 +28,7 @@ def load_rotation_matrix(rot: dict) -> np.ndarray:
            [0., 1., 0.],
            [0., 0., 1.]])
     """
-    return Rotation.from_quat([rot['x'], rot['y'], rot['z'], rot['w']]).as_matrix()
+    return Rotation.from_quat([rot["x"], rot["y"], rot["z"], rot["w"]]).as_matrix()
 
 
 def load_transform_matrix(trans: dict, rot: dict) -> np.ndarray:
@@ -55,7 +56,7 @@ def load_transform_matrix(trans: dict, rot: dict) -> np.ndarray:
     """
     transform = np.zeros((4, 4), dtype=np.float32)
     transform[:3, :3] = load_rotation_matrix(rot)
-    transform[:, 3] = [trans['m00'], trans['m10'], trans['m20'], 1]
+    transform[:, 3] = [trans["m00"], trans["m10"], trans["m20"], 1]
     return transform
 
 
@@ -77,9 +78,14 @@ def extract_intrinsics_matrix(intrinsics_json: dict) -> np.ndarray:
          [0   fy cy]
          [0   0   1]]
     """
-    return np.asarray([[intrinsics_json['m00'], intrinsics_json['m10'], intrinsics_json['m20']],
-                    [intrinsics_json['m01'], intrinsics_json['m11'], intrinsics_json['m21']],
-                    [intrinsics_json['m02'], intrinsics_json['m12'], intrinsics_json['m22']]])
+    return np.asarray(
+        [
+            [intrinsics_json["m00"], intrinsics_json["m10"], intrinsics_json["m20"]],
+            [intrinsics_json["m01"], intrinsics_json["m11"], intrinsics_json["m21"]],
+            [intrinsics_json["m02"], intrinsics_json["m12"], intrinsics_json["m22"]],
+        ]
+    )
+
 
 def rotation_to_homogenous(vec):
     """
@@ -107,6 +113,7 @@ def rotation_to_homogenous(vec):
     swap[3, 3] = 1
     return swap
 
+
 def convert_extrinsics(extrinsics):
     # Extract the rotation matrix (3x3) and translation vector (3x1)
     R = extrinsics[:3, :3]
@@ -124,6 +131,7 @@ def convert_extrinsics(extrinsics):
     extrinsics_new = np.vstack((extrinsics_new, [0, 0, 0, 1]))
 
     return extrinsics_new
+
 
 def load_cam_infos(take_path: Path) -> dict:
     """
@@ -157,27 +165,28 @@ def load_cam_infos(take_path: Path) -> dict:
     to align with a specific coordinate system convention.
     """
     camera_parameters = {}
-    camera_paths = sorted((take_path / "calibration").glob('camera*.json'))
+    camera_paths = sorted((take_path / "calibration").glob("camera*.json"))
 
     for camera_path in camera_paths:
         cam_idx = camera_path.stem
         with camera_path.open() as f:
-            cam_info = json.load(f)['value0']
+            cam_info = json.load(f)["value0"]
 
-        intrinsics = extract_intrinsics_matrix(cam_info['color_parameters']['intrinsics_matrix'])
+        intrinsics = extract_intrinsics_matrix(cam_info["color_parameters"]["intrinsics_matrix"])
         intrinsics[2, 1] = 0
         intrinsics[2, 2] = 1
-        extrinsics = load_transform_matrix(cam_info['camera_pose']['translation'], cam_info['camera_pose']['rotation'])
+        extrinsics = load_transform_matrix(cam_info["camera_pose"]["translation"], cam_info["camera_pose"]["rotation"])
 
         # [INFO] Orbbec Cameras
-        if 'color2depth_transform' in cam_info:
-            color2depth_transform = load_transform_matrix(cam_info['color2depth_transform']['translation'],
-                                                        cam_info['color2depth_transform']['rotation'])
+        if "color2depth_transform" in cam_info:
+            color2depth_transform = load_transform_matrix(
+                cam_info["color2depth_transform"]["translation"], cam_info["color2depth_transform"]["rotation"]
+            )
 
             extrinsics = np.matmul(extrinsics, color2depth_transform)
 
             YZ_FLIP = rotation_to_homogenous(np.pi * np.array([1, 0, 0]))
-            YZ_SWAP = rotation_to_homogenous(np.pi/2 * np.array([1, 0, 0]))
+            YZ_SWAP = rotation_to_homogenous(np.pi / 2 * np.array([1, 0, 0]))
 
             extrinsics = YZ_SWAP @ extrinsics @ YZ_FLIP
 
@@ -188,27 +197,28 @@ def load_cam_infos(take_path: Path) -> dict:
             extrinsics = np.linalg.inv(extrinsics)
             extrinsics = T_marshall_orbbec @ extrinsics
 
-        color_params = cam_info['color_parameters']
-        radial_params = tuple(color_params['radial_distortion'].values())
-        tangential_params = tuple(color_params['tangential_distortion'].values())
+        color_params = cam_info["color_parameters"]
+        radial_params = tuple(color_params["radial_distortion"].values())
+        tangential_params = tuple(color_params["tangential_distortion"].values())
 
         camera_parameters[cam_idx] = {
-            'K': intrinsics,
-            'T_world_camera': extrinsics,
-            'fov_x': color_params['fov_x'],
-            'fov_y': color_params['fov_y'],
-            'c_x': color_params['c_x'],
-            'c_y': color_params['c_y'],
-            'width': color_params['width'],
-            'height': color_params['height'],
-            'radial_params': radial_params,
-            'tangential_params': tangential_params,
+            "K": intrinsics,
+            "T_world_camera": extrinsics,
+            "fov_x": color_params["fov_x"],
+            "fov_y": color_params["fov_y"],
+            "c_x": color_params["c_x"],
+            "c_y": color_params["c_y"],
+            "width": color_params["width"],
+            "height": color_params["height"],
+            "radial_params": radial_params,
+            "tangential_params": tangential_params,
         }
 
     return camera_parameters
 
+
 # Additional helper function to project 3D points to 2D using camera parameters
-def project_to_2d(points_3d, K, T_camera_world):
+def project_to_2d_np(points_3d, K, T_camera_world):
     """
     Project a batch of 3D points to 2D image coordinates using camera parameters.
 
@@ -254,3 +264,44 @@ def project_to_2d(points_3d, K, T_camera_world):
     points_img = points_img_hom[:2, :] / z_coords
 
     return points_img.astype(np.int32)
+
+def project_to_2d(points_3d, K, T_camera_world):
+    """
+    Project a batch of 3D points to 2D image coordinates using camera parameters.
+
+    Parameters
+    ----------
+    points_3d : torch.Tensor
+        Batch of 3D point coordinates in world space with shape (3, N).
+    K : torch.Tensor
+        3x3 camera intrinsics matrix.
+    T_camera_world : torch.Tensor
+        4x4 camera extrinsics matrix (p_camera = T_camera_world @ p_world).
+
+    Returns
+    -------
+    torch.Tensor
+        Batch of 2D integer pixel coordinates with shape (2, N) of the projected points in the image plane.
+
+    """
+    # Get number of points
+    n_points = points_3d.shape[-1]
+
+    # Convert the points to homogeneous coordinates (4, N)
+    ones = torch.ones((1, n_points), dtype=points_3d.dtype, device=points_3d.device, requires_grad=points_3d.requires_grad)
+    points_3d_hom = torch.cat([points_3d, ones], dim=0)
+
+    # Apply extrinsic matrix to all points (4, N)
+    points_cam = T_camera_world @ points_3d_hom
+
+    # Apply intrinsic matrix to all points (3, N)
+    points_img_hom = K @ points_cam[:3]
+
+    # Get the z-coordinates
+    z_coords = points_img_hom[2]
+
+    # Normalize x, y by z to get (2, N) image coordinates
+    points_img = points_img_hom[:2, :] / z_coords
+
+    # Convert to integer pixel coordinates
+    return points_img

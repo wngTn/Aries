@@ -1,8 +1,9 @@
+import math
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-from typing import Optional
 
 from .vit import rot6d_to_rotmat
 
@@ -30,8 +31,9 @@ def make_conv_layers(feat_dims, kernel=3, stride=1, padding=1, bnrelu_final=True
                 out_channels=feat_dims[i + 1],
                 kernel_size=kernel,
                 stride=stride,
-                padding=padding
-            ))
+                padding=padding,
+            )
+        )
         # Do not use BN and ReLU for final estimation
         if i < len(feat_dims) - 2 or (i == len(feat_dims) - 2 and bnrelu_final):
             layers.append(nn.BatchNorm2d(feat_dims[i + 1]))
@@ -51,7 +53,9 @@ def make_deconv_layers(feat_dims, bnrelu_final=True):
                 stride=2,
                 padding=1,
                 output_padding=0,
-                bias=False))
+                bias=False,
+            )
+        )
 
         # Do not use BN and ReLU for final estimation
         if i < len(feat_dims) - 2 or (i == len(feat_dims) - 2 and bnrelu_final):
@@ -71,11 +75,13 @@ def sample_joint_features(img_feat, joint_xy):
     return img_feat
 
 
-def perspective_projection(points: torch.Tensor,
-                           translation: torch.Tensor,
-                           focal_length: torch.Tensor,
-                           camera_center: Optional[torch.Tensor] = None,
-                           rotation: Optional[torch.Tensor] = None) -> torch.Tensor:
+def perspective_projection(
+    points: torch.Tensor,
+    translation: torch.Tensor,
+    focal_length: torch.Tensor,
+    camera_center: Optional[torch.Tensor] = None,
+    rotation: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     """
     Computes the perspective projection of a set of 3D points.
     Args:
@@ -96,17 +102,17 @@ def perspective_projection(points: torch.Tensor,
     K = torch.zeros([batch_size, 3, 3], device=points.device, dtype=points.dtype)
     K[:, 0, 0] = focal_length[:, 0]
     K[:, 1, 1] = focal_length[:, 1]
-    K[:, 2, 2] = 1.
+    K[:, 2, 2] = 1.0
     K[:, :-1, -1] = camera_center
     # Transform points
-    points = torch.einsum('bij,bkj->bki', rotation, points)
+    points = torch.einsum("bij,bkj->bki", rotation, points)
     points = points + translation.unsqueeze(1)
 
     # Apply perspective distortion
     projected_points = points / points[:, :, -1].unsqueeze(-1)
 
     # Apply camera intrinsics
-    projected_points = torch.einsum('bij,bkj->bki', K, projected_points)
+    projected_points = torch.einsum("bij,bkj->bki", K, projected_points)
 
     return projected_points[:, :, :-1]
 
@@ -125,12 +131,11 @@ class DeConvNet(nn.Module):
                 self.deconv.append(make_deconv_layers([feat_dim // 2, feat_dim // 4, feat_dim // 8, feat_dim // 8]))
 
     def forward(self, img_feat):
-
         face_img_feats = []
         img_feat = self.first_conv(img_feat)
         face_img_feats.append(img_feat)
         for i, deconv in enumerate(self.deconv):
-            scale = 2 ** i
+            scale = 2**i
             img_feat_i = deconv(img_feat)
             face_img_feat = img_feat_i
             face_img_feats.append(face_img_feat)
@@ -141,11 +146,21 @@ class DeConvNet_v2(nn.Module):
     def __init__(self, feat_dim=768):
         super(DeConvNet_v2, self).__init__()
         self.first_conv = make_conv_layers([feat_dim, feat_dim // 2], kernel=1, stride=1, padding=0, bnrelu_final=False)
-        self.deconv = nn.Sequential(*[
-            nn.ConvTranspose2d(in_channels=feat_dim // 2, out_channels=feat_dim // 4, kernel_size=4, stride=4,
-                               padding=0, output_padding=0, bias=False),
-            nn.BatchNorm2d(feat_dim // 4),
-            nn.ReLU(inplace=True)])
+        self.deconv = nn.Sequential(
+            *[
+                nn.ConvTranspose2d(
+                    in_channels=feat_dim // 2,
+                    out_channels=feat_dim // 4,
+                    kernel_size=4,
+                    stride=4,
+                    padding=0,
+                    output_padding=0,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(feat_dim // 4),
+                nn.ReLU(inplace=True),
+            ]
+        )
 
     def forward(self, img_feat):
         face_img_feats = []
@@ -167,27 +182,40 @@ class RefineNet(nn.Module):
         self.dec_cam = nn.Linear(self.out_dim, 3)
         self.dec_shape = nn.Linear(self.out_dim, 10)
 
-        self.joint_rep_type = '6d'
-        self.joint_rep_dim = {'6d': 6, 'aa': 3}[self.joint_rep_type]
+        self.joint_rep_type = "6d"
+        self.joint_rep_dim = {"6d": 6, "aa": 3}[self.joint_rep_type]
 
-    def forward(self, img_feat, verts_3d, pred_cam, pred_mano_feats, focal_length):
+    def forward(self, img_feat, verts_3d, pred_cam, pred_mano_feats, K):
         B = img_feat.shape[0]
 
         img_feats = self.deconv(img_feat)
 
         img_feat_sizes = [img_feat.shape[2] for img_feat in img_feats]
 
-        temp_cams = [torch.stack([pred_cam[:, 1], pred_cam[:, 2],
-                                  2 * focal_length[:, 0] / (img_feat_size * pred_cam[:, 0] + 1e-9)], dim=-1) for
-                     img_feat_size in img_feat_sizes]
+        focal_length = torch.tensor([[K[0, 0], K[1, 1]]], dtype=img_feat.dtype, device=img_feat.device).repeat(B, 1)
+        camera_center = torch.tensor([[K[0, -1], K[1, -1]]], dtype=img_feat.dtype, device=img_feat.device).repeat(B, 1)
 
-        verts_2d = [perspective_projection(verts_3d,
-                                           translation=temp_cams[i],
-                                           focal_length=focal_length / img_feat_sizes[i]) for i in
-                    range(len(img_feat_sizes))]
+        temp_cams = [
+            torch.stack(
+                [pred_cam[:, 1], pred_cam[:, 2], 2 * focal_length[:, 0] / (img_feat_size * pred_cam[:, 0] + 1e-9)],
+                dim=-1,
+            )
+            for img_feat_size in img_feat_sizes
+        ]
 
-        vert_feats = [sample_joint_features(img_feats[i], verts_2d[i]).max(1).values for i in
-                      range(len(img_feat_sizes))]
+        verts_2d = [
+            perspective_projection(
+                verts_3d, 
+                translation=temp_cams[i], 
+                focal_length=focal_length / img_feat_sizes[i],
+                # camera_center=camera_center
+            )
+            for i in range(len(img_feat_sizes))
+        ]
+
+        vert_feats = [
+            sample_joint_features(img_feats[i], verts_2d[i]).max(1).values for i in range(len(img_feat_sizes))
+        ]
 
         vert_feats = torch.cat(vert_feats, dim=-1)
 
@@ -195,15 +223,17 @@ class RefineNet(nn.Module):
         delta_betas = self.dec_shape(vert_feats)
         delta_cam = self.dec_cam(vert_feats)
 
-        pred_hand_pose = pred_mano_feats['hand_pose'] + delta_pose
-        pred_betas = pred_mano_feats['betas'] + delta_betas
-        pred_cam = pred_mano_feats['cam'] + delta_cam
+        pred_hand_pose = pred_mano_feats["hand_pose"] + delta_pose
+        pred_betas = pred_mano_feats["betas"] + delta_betas
+        pred_cam = pred_mano_feats["cam"] + delta_cam
 
         pred_hand_pose = rot6d_to_rotmat(pred_hand_pose).view(B, -1, 3, 3)
 
-        pred_mano_params = {'global_orient': pred_hand_pose[:, :1],
-                            'hand_pose': pred_hand_pose[:, 1:],
-                            'betas': pred_betas,
-                            'pred_cam': pred_cam}
+        pred_mano_params = {
+            "global_orient": pred_hand_pose[:, :1],
+            "hand_pose": pred_hand_pose[:, 1:],
+            "betas": pred_betas,
+            "pred_cam": pred_cam,
+        }
 
         return pred_mano_params

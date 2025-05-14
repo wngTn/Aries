@@ -153,10 +153,10 @@ def main():
 
             if cam_predictions:
                 # Render
-                # rendered_image = render_hands(
-                #     renderer, frame_num, img, cam_predictions, cam_id, OUTPUT_PATH_IMAGES, OUTPUT_PATH_OBJ
-                # )
-                # rendered_images.append(rendered_image)
+                rendered_image = render_hands(
+                    renderer, frame_num, img, cam_predictions, cam_id, OUTPUT_PATH_IMAGES, OUTPUT_PATH_OBJ
+                )
+                rendered_images.append(rendered_image)
                 preds[cam_id] = cam_predictions
 
         if rendered_images:

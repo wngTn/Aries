@@ -215,7 +215,7 @@ class Renderer:
         camera_pose[:3, 3] = camera_translation
         camera_center = [render_res[0] / 2.0, render_res[1] / 2.0]
         camera = pyrender.IntrinsicsCamera(
-            fx=focal_length, fy=focal_length, cx=camera_center[0], cy=camera_center[1], zfar=1e12
+            fx=focal_length[0], fy=focal_length[1], cx=camera_center[0], cy=camera_center[1], zfar=1e12
         )
 
         # Create camera node and add it to pyRender scene

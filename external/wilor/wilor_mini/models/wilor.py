@@ -33,7 +33,7 @@ class WiLor(nn.Module):
         self.IMAGE_MEAN = torch.from_numpy(np.array([0.485, 0.456, 0.406]).reshape(1, 1, 1, 3))
         self.IMAGE_STD = torch.from_numpy(np.array([0.229, 0.224, 0.225])).reshape(1, 1, 1, 3)
 
-    def forward(self, x):
+    def forward(self, x, K=None):
         x = x.flip(dims=[-1]) / 255.0
         x = (x - self.IMAGE_MEAN.to(x.device, dtype=x.dtype)) / self.IMAGE_STD.to(x.device, dtype=x.dtype)
         x = x.permute(0, 3, 1, 2)
@@ -42,7 +42,7 @@ class WiLor(nn.Module):
         # if using ViT backbone, we need to use a different aspect ratio
         temp_mano_params, pred_cam, pred_mano_feats, vit_out = self.backbone(x[:, :, :, 32:-32])  # B, 1280, 16, 12
         # Compute camera translation
-        focal_length = self.FOCAL_LENGTH * torch.ones(batch_size, 2, device=x.device, dtype=x.dtype)
+        # focal_length = self.FOCAL_LENGTH * torch.ones(batch_size, 2, device=x.device, dtype=x.dtype)
 
         ## Temp MANO
         temp_mano_params['global_orient'] = temp_mano_params['global_orient'].reshape(batch_size, -1, 3, 3)
@@ -51,8 +51,7 @@ class WiLor(nn.Module):
         temp_mano_output = self.mano(**temp_mano_params, pose2rot=False)
         temp_vertices = temp_mano_output.vertices
 
-        pred_mano_params = self.refine_net(vit_out, temp_vertices, pred_cam, pred_mano_feats,
-                                           focal_length)
+        pred_mano_params = self.refine_net(vit_out, temp_vertices, pred_cam, pred_mano_feats, K)
         mano_output = self.mano(**pred_mano_params, pose2rot=False)
         pred_keypoints_3d = mano_output.joints
         pred_vertices = mano_output.vertices

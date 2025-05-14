@@ -74,7 +74,7 @@ class WiLorHandPose3dEstimationPipeline:
     @torch.no_grad()
     def predict(self, image, **kwargs):
         self.logger.info("start hand detection >>> ")
-        focal_length = kwargs.get("focal_length", self.FOCAL_LENGTH)
+        K = kwargs.get("K", None)
         detections = self.hand_detector(image, conf=kwargs.get("hand_conf", 0.3), verbose=self.verbose)[0]
         detect_rets = []
         bboxes = []
@@ -121,8 +121,11 @@ class WiLorHandPose3dEstimationPipeline:
             img_patches.append(img_patch_cv)
         img_patches = np.stack(img_patches)
         img_patches = torch.from_numpy(img_patches).to(device=self.device, dtype=self.dtype)
-        wilor_output = self.wilor_model(img_patches)
+        wilor_output = self.wilor_model(img_patches, K)
         wilor_output = {k: v.cpu().float().numpy() for k, v in wilor_output.items()}
+        
+        focal_length = torch.tensor([[K[0, 0], K[1, 1]]], dtype=img_patches.dtype, device=img_patches.device).repeat(img_patches.shape[0], 1)
+        camera_center = torch.tensor([[K[0, -1], K[1, -1]]], dtype=img_patches.dtype, device=img_patches.device).repeat(img_patches.shape[0], 1)
 
         for i in range(len(detect_rets)):
             wilor_output_i = {key: val[[i]] for key, val in wilor_output.items()}
@@ -141,16 +144,24 @@ class WiLorHandPose3dEstimationPipeline:
                 wilor_output_i["hand_pose"] = np.concatenate(
                     (wilor_output_i["hand_pose"][:, :, 0:1], -wilor_output_i["hand_pose"][:, :, 1:3]),
                     axis=-1)
-            scaled_focal_length = self.FOCAL_LENGTH / self.IMAGE_SIZE * img_size.max()
-            pred_cam_t_full = utils.cam_crop_to_full(pred_cam, box_center[None], bbox_size, img_size[None],
-                                                     scaled_focal_length)
+            scaled_focal_length = focal_length[0] # self.FOCAL_LENGTH / self.IMAGE_SIZE * img_size.max()
+            pred_cam_t_full = utils.cam_crop_to_full(
+                pred_cam, 
+                box_center[None], 
+                bbox_size, 
+                img_size[None], 
+                scaled_focal_length.cpu().numpy(),
+                # camera_center[0].cpu().numpy()
+            )
             wilor_output_i["pred_cam_t_full"] = pred_cam_t_full
             wilor_output_i["scaled_focal_length"] = scaled_focal_length
             # 弱透视
-            pred_keypoints_2d = utils.perspective_projection(wilor_output_i["pred_keypoints_3d"],
-                                                             translation=pred_cam_t_full,
-                                                             focal_length=np.array([scaled_focal_length] * 2)[None],
-                                                             camera_center=img_size[None] / 2)
+            pred_keypoints_2d = utils.perspective_projection(
+                wilor_output_i["pred_keypoints_3d"],
+                translation=pred_cam_t_full,
+                focal_length=focal_length[0:1].cpu().numpy(),
+                # camera_center=camera_center[0:1].cpu().numpy(),
+            )
             wilor_output_i["pred_keypoints_2d"] = pred_keypoints_2d
             detect_rets[i]["wilor_preds"] = wilor_output_i
 

@@ -29,6 +29,7 @@ dependencies = [
     "pytorch-warmup>=0.2.0",
     "transformers>=4.51.3",
     "numpy>=2.2.5",
+    "open3d>=0.19.0",
 ]
 
 [[tool.uv.index]]
