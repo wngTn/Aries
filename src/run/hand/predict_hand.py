@@ -12,6 +12,7 @@ from wilor_mini.pipelines.wilor_hand_pose3d_estimation_pipeline import WiLorHand
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
 
 from src.utils.visualization.rendering import Renderer
+from src.utils.camera import load_cam_infos
 
 LIGHT_PURPLE = (0.25098039, 0.274117647, 0.65882353)
 PATH_TO_IMAGES = Path("data", "20250227_Testing", "Marshall", "recording", "export")
@@ -20,6 +21,7 @@ OUTPUT_PATH_OBJ = Path("data", "20250227_Testing", "Marshall", "predictions", "h
 FRAME_INTERVAL = [400, 14_000]
 CAM_IDS = [1, 2]
 
+CAM_INFOS = load_cam_infos(Path("data/20250227_Testing"))
 
 def to_name(frame_idx, cam_idx):
     return f"color_{frame_idx:06d}_camera{cam_idx:02d}.jpg"
@@ -31,9 +33,21 @@ def load_frame_images(path_to_images: Path, frame_num):
     for cam_num in CAM_IDS:
         img_name = to_name(frame_num, cam_num)
         img_path = path_to_images / img_name
+        cam_params = CAM_INFOS[f"camera_0{cam_num + 4}"]
         if img_path.exists():
             img = cv2.imread(str(img_path))
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.undistort(
+                img,
+                cam_params["intrinsics"],
+                np.array(
+                    [cam_params["radial_params"][0]]
+                    + [cam_params["radial_params"][1]]
+                    + list(cam_params["tangential_params"][:2])
+                    + [cam_params["radial_params"][2]]
+                    + [0, 0, 0]
+                ),
+            )
             frame_images.append((cam_num, img))
         else:
             print(f"Warning: Image {img_path} not found")
@@ -139,10 +153,10 @@ def main():
 
             if cam_predictions:
                 # Render
-                rendered_image = render_hands(
-                    renderer, frame_num, img, cam_predictions, cam_id, OUTPUT_PATH_IMAGES, OUTPUT_PATH_OBJ
-                )
-                rendered_images.append(rendered_image)
+                # rendered_image = render_hands(
+                #     renderer, frame_num, img, cam_predictions, cam_id, OUTPUT_PATH_IMAGES, OUTPUT_PATH_OBJ
+                # )
+                # rendered_images.append(rendered_image)
                 preds[cam_id] = cam_predictions
 
         if rendered_images:
@@ -151,9 +165,10 @@ def main():
             combined_image = cv2.resize(combined_image, np.array(combined_image.shape[:2])[::-1] // 4)
             cv2.imwrite(str(OUTPUT_PATH_IMAGES / img_filename), combined_image)
             
+        if preds:
             pkl_filename = f"frame_{frame_num:06d}.pkl"
             with open(OUTPUT_PATH_OBJ / pkl_filename, "wb") as f:
-                pickle.dump(cam_predictions, f)
+                pickle.dump(preds, f)
             print(f"Saved visualization for frame {frame_num}")
 
     print("\nProcessing complete!")

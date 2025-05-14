@@ -140,8 +140,8 @@ def load_cam_infos(take_path: Path) -> dict:
     dict
         Dictionary containing camera parameters for each camera, with keys 'camera0X' where
         X is the camera number. Each camera's dictionary contains:
-        - intrinsics: 3x3 camera intrinsics matrix
-        - extrinsics: 4x4 camera extrinsics matrix
+        - K: 3x3 camera intrinsics matrix
+        - T_world_camera: 4x4 camera extrinsics matrix, p_world = T_world_camera @ p_camera
         - fov_x: horizontal field of view
         - fov_y: vertical field of view
         - c_x: principal point x-coordinate
@@ -150,7 +150,6 @@ def load_cam_infos(take_path: Path) -> dict:
         - height: image height in pixels
         - radial_params: radial distortion parameters
         - tangential_params: tangential distortion parameters
-        - depth_extrinsics: 4x4 depth camera extrinsics matrix
 
     Notes
     -----
@@ -160,7 +159,8 @@ def load_cam_infos(take_path: Path) -> dict:
     camera_parameters = {}
     camera_paths = sorted((take_path / "calibration").glob('camera*.json'))
 
-    for cam_id, camera_path in enumerate(camera_paths, start=1):
+    for camera_path in camera_paths:
+        cam_idx = camera_path.stem
         with camera_path.open() as f:
             cam_info = json.load(f)['value0']
 
@@ -174,7 +174,6 @@ def load_cam_infos(take_path: Path) -> dict:
             color2depth_transform = load_transform_matrix(cam_info['color2depth_transform']['translation'],
                                                         cam_info['color2depth_transform']['rotation'])
 
-            depth_extrinsics = extrinsics.copy()
             extrinsics = np.matmul(extrinsics, color2depth_transform)
 
             YZ_FLIP = rotation_to_homogenous(np.pi * np.array([1, 0, 0]))
@@ -193,9 +192,9 @@ def load_cam_infos(take_path: Path) -> dict:
         radial_params = tuple(color_params['radial_distortion'].values())
         tangential_params = tuple(color_params['tangential_distortion'].values())
 
-        camera_parameters[f'camera0{cam_id}'] = {
-            'intrinsics': intrinsics,
-            'extrinsics': extrinsics,
+        camera_parameters[cam_idx] = {
+            'K': intrinsics,
+            'T_world_camera': extrinsics,
             'fov_x': color_params['fov_x'],
             'fov_y': color_params['fov_y'],
             'c_x': color_params['c_x'],
@@ -204,45 +203,54 @@ def load_cam_infos(take_path: Path) -> dict:
             'height': color_params['height'],
             'radial_params': radial_params,
             'tangential_params': tangential_params,
-            'depth_extrinsics': depth_extrinsics
         }
 
     return camera_parameters
 
 # Additional helper function to project 3D points to 2D using camera parameters
-def project_to_2d(point_3d, intrinsic_matrix, extrinsic_matrix):
+def project_to_2d(points_3d, K, T_camera_world):
     """
-    Project a 3D point to 2D image coordinates using camera parameters.
+    Project a batch of 3D points to 2D image coordinates using camera parameters.
 
     Parameters
     ----------
-    point_3d : np.ndarray
-        3D point coordinates in world space (x, y, z).
-    intrinsic_matrix : np.ndarray
+    points_3d : np.ndarray
+        Batch of 3D point coordinates in world space with shape (3, N).
+    K : np.ndarray
         3x3 camera intrinsics matrix.
-    extrinsic_matrix : np.ndarray
-        4x4 camera extrinsics matrix (world to camera transform).
+    T_camera_world : np.ndarray
+        4x4 camera extrinsics matrix (p_camera = T_camera_world @ p_world).
 
     Returns
     -------
     np.ndarray
-        2D integer pixel coordinates (u, v) of the projected point in the image plane.
+        Batch of 2D integer pixel coordinates with shape (2, N) of the projected points in the image plane.
 
     Notes
     -----
     The projection pipeline:
-    1. Convert 3D point to homogeneous coordinates
+    1. Convert 3D points to homogeneous coordinates
     2. Transform to camera space using extrinsic matrix
     3. Project to image plane using intrinsic matrix
     4. Normalize by depth (z-coordinate)
     5. Convert to integer pixel coordinates
     """
-    # Convert the point to homogeneous coordinates
-    point_3d_hom = np.append(point_3d, 1)
-    # Apply extrinsic matrix
-    point_cam = np.dot(extrinsic_matrix, point_3d_hom)
-    # Apply intrinsic matrix
-    point_img_hom = np.dot(intrinsic_matrix, point_cam[:3])
+    # Get number of points
+    n_points = points_3d.shape[-1]
+
+    # Convert the points to homogeneous coordinates (4, N)
+    points_3d_hom = np.r_[points_3d, np.ones((1, n_points))]
+
+    # Apply extrinsic matrix to all points (4, N)
+    points_cam = T_camera_world @ points_3d_hom
+
+    # Apply intrinsic matrix to all points (3, N)
+    points_img_hom = K @ points_cam[:3]
+
     # Normalize by the third (z) coordinate to get image coordinates
-    point_img = point_img_hom[:2] / point_img_hom[2]
-    return point_img.astype(np.int32)
+    z_coords = points_img_hom[2]
+
+    # Normalize x, y by z to get (2, N) image coordinates
+    points_img = points_img_hom[:2, :] / z_coords
+
+    return points_img.astype(np.int32)
