@@ -1,14 +1,14 @@
+import itertools
 import pickle
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
-import cv2
 import rootutils
 import torch
-import torch.optim as optim
-from tqdm import tqdm  # Added tqdm import
 
 rootutils.setup_root(__file__, indicator="pyproject.toml", pythonpath=True)
+
+from collections import defaultdict
 
 import numpy as np
 from smplx import MANOLayer
@@ -17,187 +17,348 @@ from src.utils.camera import load_cam_infos, project_to_2d
 from src.utils.easy_convert import convert_rot_rep
 
 PATH_TO_RECORDING = Path("data", "20250227_Testing")
+PATH_TO_OUTPUT = PATH_TO_RECORDING / "Marshall" / "predictions" / "hands_processed"
+PATH_TO_OUTPUT.mkdir(exist_ok=True)
 
 CAM_INFOS = load_cam_infos(PATH_TO_RECORDING)
 
 
-def mano_params_to_2d(mano_layer, global_orientation_aa, translation, K, T_camera_world):
-    global_orientation_mat = convert_rot_rep("aa -> rotation_matrix", global_orientation_aa)
-
+def mano_params_to_2d(mano_layer, global_orientation_mat, translation, K, T_camera_world):
     mano_output = mano_layer(
         global_orient=global_orientation_mat,  # (1, 1, 3, 3)
         transl=translation,  # (1, 3)
     )
 
-    kpts = mano_output.joints[0].float()
+    kpts = mano_output.vertices[0].float()
 
     points_2d = project_to_2d(kpts.T, K, T_camera_world)
 
     return points_2d
 
 
-def error_fn(mano_layer, global_orientation_aa, translation, target_points_2d, K, T_camera_world):
+def compute_adjusted_mano_params(global_orientation_mat, translation, wrist_position, T_camera_world):
+    # [INFO] We need this, since we rotate originally around the coordinate origin, Global orient rotates locally
+    global_orientation_mat = T_camera_world[:3, :3].T @ global_orientation_mat
+    translation_offset = (T_camera_world[:3, :3].T @ wrist_position) - wrist_position
+    # Convert to (1, 3)
+    translation_offset = translation_offset.T
+    translation = (T_camera_world[:3, :3].T @ (-T_camera_world[:3, 3:4] + translation.T)).T + translation_offset
+
+    return global_orientation_mat, translation
+
+
+def get_camera_rays(points_3d, Ks, T_camera_worlds):
     """
-    Calculate the error between the target 2D points and the projected 2D points using the MANO layer.
+    Calculate camera positions and ray directions
+
+    Args:
+        points_3d: List of 3D points in world coordinates (N x 3)
+        Ks: List of camera intrinsic matrices (N x 3 x 3)
+        T_camera_worlds: List of camera-to-world transformation matrices (N x 4 x 4)
+
+    Returns:
+        camera_positions: Camera centers in world space (N x 3)
+        ray_directions: Ray directions in world space (N x 3)
     """
-    # Convert global_orientation_aa to rotation matrix
-    global_orientation_mat = convert_rot_rep("aa -> rotation_matrix", global_orientation_aa)
+    n_cameras = len(points_3d)
+    camera_positions = []
+    ray_directions = []
 
-    # Run the MANO model to get the predicted 2D keypoints
-    mano_output = mano_layer(global_orient=global_orientation_mat, transl=translation)
+    for i in range(n_cameras):
+        # Get camera parameters
+        K = Ks[i]
+        T_camera_world = T_camera_worlds[i]
 
-    # Project 3D keypoints to 2D
-    kpts = mano_output.joints[0].float()
-    points_2d = project_to_2d(kpts.T, K, T_camera_world)
+        # Camera position is the translation part of T_camera_world
+        camera_pos = T_camera_world[:3, 3]
+        camera_positions.append(camera_pos)
 
-    # Compute the L2 error between the target and predicted 2D points
-    error = torch.norm(points_2d - target_points_2d)
-    print(error)
-    return error
+        # Calculate ray direction in camera coordinates
+        # (assuming the point_3d is already in world space)
+        point_world = points_3d[i]
+
+        # Ray direction is from camera center to the point
+        ray_dir = point_world - camera_pos
+        ray_dir = ray_dir / torch.norm(ray_dir)
+        ray_directions.append(ray_dir)
+
+    return torch.stack(camera_positions), torch.stack(ray_directions)
 
 
-def transform(mano_layer, target_points_2d, K, T_camera_world):
+def triangulate_rays(camera_positions, ray_directions):
     """
-    Optimize the global orientation and translation to minimize the error between the projected 2D points and target 2D points.
+    Find the 3D point closest to the intersection of multiple rays (updated for newer PyTorch)
+
+    Args:
+        camera_positions: Camera centers in world space (N x 3)
+        ray_directions: Normalized ray directions in world space (N x 3)
+
+    Returns:
+        Point in 3D space that minimizes the sum of squared distances to all rays
     """
-    # Initialize global orientation and translation (starting point for optimization)
-    global_orientation_aa = torch.zeros(
-        (1, 1, 3), dtype=torch.float32, device=target_points_2d.device, requires_grad=True
-    )
-    translation = torch.zeros((1, 3), dtype=torch.float32, device=target_points_2d.device, requires_grad=True)
+    n_cameras = len(camera_positions)
 
-    # Use L-BFGS optimizer for optimization
-    optimizer = optim.LBFGS([global_orientation_aa, translation], lr=1e-2, max_iter=4, line_search_fn="strong_wolfe")
+    # Convert inputs to tensors if they aren't already
+    camera_positions = torch.as_tensor(camera_positions, dtype=torch.float32)
+    ray_directions = torch.as_tensor(ray_directions, dtype=torch.float32)
 
-    # Initialize variables for early stopping
-    best_loss = float("inf")
-    patience = 50
-    counter = 0
-    previous_loss = float("inf")
+    # Normalize ray directions
+    ray_directions = ray_directions / torch.norm(ray_directions, dim=1, keepdim=True)
 
-    def closure():
-        optimizer.zero_grad()
-        # Calculate the error (loss) and backward pass
-        loss = error_fn(mano_layer, global_orientation_aa, translation, target_points_2d, K, T_camera_world)
-        loss.backward()
-        return loss
+    # Set up the linear system to find the closest point to all rays
+    A = torch.zeros((n_cameras * 3, 3), dtype=torch.float32)
+    b = torch.zeros(n_cameras * 3, dtype=torch.float32)
 
-    for i in tqdm(range(100)):
-        # Run the optimization
-        current_loss = optimizer.step(closure)
+    for i in range(n_cameras):
+        camera_pos = camera_positions[i]
+        ray_dir = ray_directions[i]
 
-        # Check for improvement
-        if current_loss < best_loss:
-            best_loss = current_loss
-            counter = 0  # Reset counter when we see improvement
-        # If no improvement or very minimal improvement
-        elif (previous_loss - current_loss) < 1e-5:  # Small threshold for meaningful improvement
-            counter += 1
-            if counter >= patience:
-                print(f"Early stopping triggered after {i + 1} iterations.")
-                break
+        ray_outer = torch.outer(ray_dir, ray_dir)
+        block = torch.eye(3) - ray_outer
 
-        previous_loss = current_loss
+        A[i * 3 : (i + 1) * 3, :] = block
+        b[i * 3 : (i + 1) * 3] = torch.matmul(block, camera_pos)
 
-    return global_orientation_aa, translation
+    # Solve the least squares problem
+    solution = torch.linalg.lstsq(A, b.unsqueeze(1)).solution
+    optimal_point = solution[:3, 0]
+
+    return optimal_point
+
+
+def triangulate_from_cameras(points_3d, T_camera_worlds):
+    """
+    Triangulate 3D point from multiple world space points using ray intersection
+
+    Args:
+        points_3d: List of 3D points in world coordinates (N x 3)
+        T_camera_worlds: List of world-to-camera transformation matrices (N x 4 x 4)
+                        (defined as p_camera = T_camera_worlds @ p_world)
+
+    Returns:
+        Optimal 3D point in world coordinates
+    """
+    n_cameras = len(points_3d)
+    camera_positions = []
+    ray_directions = []
+
+    for i in range(n_cameras):
+        # Extract camera center in world coordinates
+        T_world_camera = torch.inverse(T_camera_worlds[i])
+        origin_camera = torch.tensor([0, 0, 0, 1], dtype=torch.float32)
+        camera_pos_homogeneous = torch.matmul(T_world_camera, origin_camera)
+        camera_pos = camera_pos_homogeneous[:3] / camera_pos_homogeneous[3]
+        camera_positions.append(camera_pos)
+
+        # The ray direction is from camera center to the world point
+        point_world = points_3d[i]
+        ray_dir = point_world - camera_pos
+        ray_dir = ray_dir / torch.norm(ray_dir)
+        ray_directions.append(ray_dir)
+
+    # Convert to tensors
+    camera_positions = torch.stack(camera_positions)
+    ray_directions = torch.stack(ray_directions)
+
+    # Find closest point to all rays
+    optimal_point = triangulate_rays(camera_positions, ray_directions)
+
+    return optimal_point
 
 
 def main():
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(f"Using device: {device}")
 
-    mano_layer = MANOLayer(
-        model_path="body_models/mano",
-        create_body_pose=False,
-    ).to(device)
+    mano_layer_fn = partial(MANOLayer, model_path="body_models/mano", create_body_pose=False)
 
-    mano_layer.requires_grad_(False)
+    rh_mano_layer = mano_layer_fn(is_rhand=True).to(device)
+    lh_mano_layer = mano_layer_fn(is_rhand=False).to(device)
 
-    cam_num = 2
+    mano_layer_dict = {"right": rh_mano_layer, "left": lh_mano_layer}
 
-    img = cv2.imread(f"data/20250227_Testing/Marshall/recording/export/color_000400_camera0{cam_num}.jpg")
+    for layer in mano_layer_dict.values():
+        layer.eval()
+        layer.requires_grad_(False)
 
-    cam_params = CAM_INFOS[f"camera_0{cam_num + 4}"]
-    img = cv2.undistort(
-        img,
-        cam_params["K"],
-        np.array(
-            [cam_params["radial_params"][0]]
-            + [cam_params["radial_params"][1]]
-            + list(cam_params["tangential_params"][:2])
-            + [cam_params["radial_params"][2]]
-            + [0, 0, 0]
-        ),
-    )
+    pred_path = Path("data/20250227_Testing/Marshall/predictions/hands/obj")
+    pred_files = sorted(pred_path.iterdir())
 
-    with open("data/20250227_Testing/Marshall/predictions/hands/obj/frame_000400.pkl", "rb") as f:
-        preds = pickle.load(f)
+    for pred_file in pred_files:
+        with pred_file.open("rb") as f:
+            preds = pickle.load(f)
 
-    cam_preds = preds[cam_num][0]["wilor_preds"]
+        frame_num = int(pred_file.stem.split("_")[-1])
 
-    # (1, 3)
-    global_orient_aa = torch.from_numpy(cam_preds["global_orient"])
-    # (1, 3)
-    translation = torch.from_numpy(cam_preds["pred_cam_t_full"])
-    # (15, 3)
-    hand_pose_aa = torch.from_numpy(cam_preds["hand_pose"])
-    # (1, 10)
-    betas = torch.from_numpy(cam_preds["betas"])
+        hand_predictions = defaultdict(list)
+        for side, cam_num in itertools.product(["left", "right"], [1, 2]):
+            cam_params = CAM_INFOS[f"camera_0{cam_num + 4}"]
 
-    H, W, C = img.shape
-    focal_length = cam_preds["scaled_focal_length"]
-    K_pred = torch.tensor(
-        [
-            [focal_length, 0, W / 2],
-            [0, focal_length, H / 2],
-            [0, 0, 1],
-        ],
-        dtype=torch.float32,
-    )
+            if cam_num not in preds:
+                continue
 
-    T_camera_world = torch.eye(4, dtype=torch.float32)
+            cam_preds = [
+                x["wilor_preds"]
+                for x in preds[cam_num]
+                if (x["is_right"] and side == "right") or (not x["is_right"] and side == "left")
+            ]
+            if not cam_preds:
+                continue
+            else:
+                cam_preds = cam_preds[0]
 
-    hand_pose_mat = convert_rot_rep("aa -> rotation_matrix", hand_pose_aa)
+            # (1, 3)
+            global_orient_aa = torch.from_numpy(cam_preds["global_orient"]).float()
+            # (1, 3, 3)
+            global_orientation_mat = convert_rot_rep("aa -> rotation_matrix", global_orient_aa)
+            # (1, 3)
+            translation = torch.from_numpy(cam_preds["pred_cam_t_full"]).float()
+            # (15, 3)
+            hand_pose_aa = torch.from_numpy(cam_preds["hand_pose"]).float()
+            # (1, 10)
+            betas = torch.from_numpy(cam_preds["betas"]).float()
 
-    partial_mano_layer = partial(mano_layer, betas=betas.to(device), hand_pose=hand_pose_mat.to(device))
+            K = torch.from_numpy(cam_params["K"]).float()
+            T_camera_world = torch.from_numpy(np.linalg.inv(cam_params["T_world_camera"])).float()
 
-    print("Calculating initial target points...")
-    target_points_2d = mano_params_to_2d(
-        partial_mano_layer,
-        global_orient_aa.to(device),
-        translation.to(device),
-        K_pred.to(device),
-        T_camera_world.to(device),
-    )
+            wrist_position = torch.from_numpy(cam_preds["pred_keypoints_3d"][0, 0:1].T)
 
-    print("Starting optimization...")
-    optim_global_orient_aa, optim_translation = transform(
-        partial_mano_layer,
-        target_points_2d.float().to(device),
-        torch.from_numpy(cam_params["K"]).float().to(device),
-        torch.from_numpy(np.linalg.inv(cam_params["T_world_camera"])).float().to(device),
-    )
+            global_orientation_mat, translation = compute_adjusted_mano_params(
+                global_orientation_mat, translation, wrist_position, T_camera_world
+            )
 
-    points_2d = mano_params_to_2d(
-        partial_mano_layer,
-        optim_global_orient_aa.to(device),
-        optim_translation.to(device),
-        torch.from_numpy(cam_params["K"]).float().to(device),
-        torch.from_numpy(np.linalg.inv(cam_params["T_world_camera"])).float().to(device),
-    )
+            global_orient_aa = convert_rot_rep("rotation_matrix -> aa", global_orientation_mat)
 
-    points_2d = points_2d.detach().cpu().numpy()
+            hand_predictions[side].append(
+                {
+                    "hand_pose_aa": hand_pose_aa,
+                    "betas": betas,
+                    "global_orient_aa": global_orient_aa,
+                    "translation": translation,
+                    "K": K,
+                    "T_camera_world": T_camera_world,
+                }
+            )
 
-    for x, y in points_2d.T:
-        cv2.circle(
-            img,
-            (int(x), int(y)),
-            2,
-            (255, 175, 0),
-            -1
-        )
+        print("Consolidating Meshes now")
 
-    cv2.imwrite("test.jpg", img)
+        data = []
+        for side in ["left", "right"]:
+            predictions = hand_predictions[side]
+            if not predictions:
+                data.append(np.zeros(109, dtype=np.float32))
+                continue
+            # Consolidating by taking the mean
+            # (2, 1, 15, 3)
+            hand_pose_aa = torch.stack([x["hand_pose_aa"] for x in predictions])
+            # (2, 1, 10)
+            betas = torch.stack([x["betas"] for x in predictions])
+            # (2, 1, 1, 3)
+            global_orient_aa = torch.stack([x["global_orient_aa"] for x in predictions])
+            # (2, 1, 3)
+            translation = torch.stack([x["translation"] for x in predictions])
+            # Ks = torch.stack([x["K"] for x in predictions])
+            T_camera_worlds = torch.stack([x["T_camera_world"] for x in predictions])
+
+            translation = triangulate_from_cameras(translation.squeeze(1), T_camera_worlds)
+            translation = translation.unsqueeze(0)
+
+            # [INFO] Consolidating here
+            hand_pose_aa = hand_pose_aa.mean(0)
+            betas = betas.mean(0)
+            global_orient_aa = global_orient_aa.mean(0)
+            # translation = translation.mean(0)
+
+            hand_pose_mat = convert_rot_rep("aa -> rotation_matrix", hand_pose_aa)
+            global_orientation_mat = convert_rot_rep("aa -> rotation_matrix", global_orient_aa)
+
+            partial_mano_layer = partial(
+                mano_layer_dict[side], betas=betas.to(device), hand_pose=hand_pose_mat.to(device)
+            )
+
+            mano_output = partial_mano_layer(
+                global_orient=global_orientation_mat.to(device),  # (1, 1, 3, 3)
+                transl=translation.to(device),  # (1, 3)
+            )
+
+            # [10 + 45 + 3 + 3 + 48]
+            data.append(
+                np.concat(
+                    [
+                        betas.reshape(-1).cpu().numpy(),
+                        hand_pose_aa[0].reshape(-1).cpu().numpy(),
+                        global_orient_aa.reshape(-1).cpu().numpy(),
+                        translation.reshape(-1).cpu().numpy(),
+                        mano_output.joints.reshape(-1).cpu().numpy(),
+                    ]
+                )
+            )
+
+        np.save(PATH_TO_OUTPUT / f"frame_{frame_num:06d}.npy", np.stack(data))
+
+        # # VISUALIZATION
+        # imgs = {}
+        # for side, hand_params in output.items():
+        #     hand_pose_aa = hand_params["hand_pose_aa"]
+        #     betas = hand_params["betas"]
+        #     global_orient_aa = hand_params["global_orient_aa"]
+        #     translation = hand_params["translation"]
+
+        #     hand_pose_mat = convert_rot_rep("aa -> rotation_matrix", hand_pose_aa)
+        #     global_orientation_mat = convert_rot_rep("aa -> rotation_matrix", global_orient_aa)
+
+        #     partial_mano_layer = partial(
+        #         mano_layer_dict[side], betas=betas.to(device), hand_pose=hand_pose_mat.to(device)
+        #     )
+
+        #     for cam_num in [1, 2]:
+        #         cam_params = CAM_INFOS[f"camera_0{cam_num + 4}"]
+        #         if cam_num not in imgs:
+        #             img = cv2.imread(f"./data/20250227_Testing/Marshall/recording/export/color_{frame_num:06d}_camera0{cam_num}.jpg")
+        #             img = cv2.undistort(
+        #                 img,
+        #                 cam_params["K"],
+        #                 np.array(
+        #                     [cam_params["radial_params"][0]]
+        #                     + [cam_params["radial_params"][1]]
+        #                     + list(cam_params["tangential_params"][:2])
+        #                     + [cam_params["radial_params"][2]]
+        #                     + [0, 0, 0]
+        #                 ),
+        #             )
+        #             imgs[cam_num] = img
+        #         else:
+        #             img = imgs[cam_num]
+
+        #         H, W, C = img.shape
+
+        #         K = cam_params["K"]
+        #         K[0, -1] = W / 2
+        #         K[1, -1] = H / 2
+
+        #         T_camera_world = np.linalg.inv(cam_params["T_world_camera"])
+
+        #         K = torch.from_numpy(K).float()
+        #         T_camera_world = torch.from_numpy(T_camera_world).float()
+
+        #         partial_mano_layer = partial(
+        #             mano_layer_dict[side], betas=betas.to(device), hand_pose=hand_pose_mat.to(device)
+        #         )
+
+        #         points_2d = mano_params_to_2d(
+        #             partial_mano_layer,
+        #             global_orientation_mat.to(device),
+        #             translation.to(device),
+        #             K.to(device),
+        #             T_camera_world.to(device),
+        #         )
+
+        #         points_2d = points_2d.detach().cpu().numpy()
+
+        #         for x, y in points_2d.T:
+        #             cv2.circle(img, (int(x), int(y)), 2, (255, 175, 0), -1)
+
+        # cv2.imwrite(f"test_{frame_num}.jpg", np.hstack(list(imgs.values())))
 
 
 if __name__ == "__main__":

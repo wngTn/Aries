@@ -159,27 +159,31 @@ def main():
                 # )
                 # rendered_images.append(rendered_image)
 
-                # K = CAM_INFOS[f"camera_0{cam_id + 4}"]["K"]
-                # K[0, -1] = img.shape[1] / 2
-                # K[1, -1] = img.shape[0] / 2
-                # T_camera_world = np.linalg.inv(CAM_INFOS[f"camera_0{cam_id + 4}"]["T_world_camera"])
+                K = CAM_INFOS[f"camera_0{cam_id + 4}"]["K"]
+                K[0, -1] = img.shape[1] / 2
+                K[1, -1] = img.shape[0] / 2
+                T_camera_world = np.linalg.inv(CAM_INFOS[f"camera_0{cam_id + 4}"]["T_world_camera"])
                 
-                # for cam_pred in cam_predictions:
-                #     points_3d = cam_pred["wilor_preds"]["pred_vertices"][0].T
-                #     # T_camera_world[:3, :3] = np.eye(3)
-                #     points_3d = points_3d - T_camera_world[:3, 3:4] + cam_pred["wilor_preds"]["pred_cam_t_full"].T
-                #     points_3d = T_camera_world[:3, :3].T @ points_3d
-                #     # T_camera_world[:3, 3] = cam_pred["wilor_preds"]["pred_cam_t_full"][0]
-                #     points_2d = project_to_2d_np(points_3d, K, T_camera_world)
-                #     for x, y in points_2d.T:
-                #         cv2.circle(
-                #             img,
-                #             (int(x), int(y)),
-                #             2,
-                #             (255, 175, 0),
-                #             -1
-                #         )
-                # rendered_images.append(img)
+                for cam_pred in cam_predictions:
+                    points_3d = cam_pred["wilor_preds"]["pred_vertices"][0].T
+                    # points_3d = points_3d - T_camera_world[:3, 3:4] + cam_pred["wilor_preds"]["pred_cam_t_full"].T
+                    # points_3d = T_camera_world[:3, :3].T @ points_3d
+                    # To get equivalent results with rotation first
+                    # First apply rotation
+                    points_3d = T_camera_world[:3, :3].T @ points_3d
+                    # Then apply adjusted translation
+                    adjusted_translation = T_camera_world[:3, :3].T @ (-T_camera_world[:3, 3:4] + cam_pred["wilor_preds"]["pred_cam_t_full"].T)
+                    points_3d = points_3d + adjusted_translation
+                    points_2d = project_to_2d_np(points_3d, K, T_camera_world)
+                    for x, y in points_2d.T:
+                        cv2.circle(
+                            img,
+                            (int(x), int(y)),
+                            2,
+                            (255, 175, 0),
+                            -1
+                        )
+                rendered_images.append(img)
                 
                 preds[cam_id] = cam_predictions
 

@@ -3,20 +3,49 @@
 # @Author  : wenshao
 # @Project : WiLoR-mini
 # @FileName: wilor_hand_pose3d_estimation_pipeline.py
-import pdb
-from skimage.filters import gaussian
-import torch
-import cv2
-from ultralytics import YOLO
-from huggingface_hub import hf_hub_download
-import os
-import numpy as np
-from tqdm import tqdm
 import logging
+import os
 
-from ..utils.logger import get_logger
+import cv2
+import numpy as np
+import torch
+from huggingface_hub import hf_hub_download
+from skimage.filters import gaussian
+from tqdm import tqdm
+from ultralytics import YOLO
+
 from ..models.wilor import WiLor
 from ..utils import utils
+from ..utils.logger import get_logger
+
+def right2left_aangle(right_aangle):
+    """
+    Convert a single axis-angle representation from right to left hand.
+
+    Args:
+        right_aangle: Axis-angle representation of shape [3,]
+
+    Returns:
+        Left hand axis-angle representation of shape [3,]
+    """
+    xmirror = np.asarray([[-1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    return cv2.Rodrigues(np.dot(xmirror, np.dot(cv2.Rodrigues(right_aangle)[0], xmirror)))[0].ravel()
+
+
+def fullrightpose2leftpose(rightpose):
+    """
+    Convert full MANO right hand pose parameters to left hand.
+
+    Args:
+        rightpose: Array of shape [45,] or [B, 45] containing axis-angle representations
+
+    Returns:
+        Array of same shape with converted parameters for left hand
+    """
+    input_shape = rightpose.shape
+    reshaped = rightpose.reshape(-1, 3)
+    leftpose = np.array([right2left_aangle(angle) for angle in reshaped])
+    return leftpose.reshape(input_shape)
 
 
 class WiLorHandPose3dEstimationPipeline:
@@ -35,29 +64,42 @@ class WiLorHandPose3dEstimationPipeline:
         self.FOCAL_LENGTH = 5000
         self.IMAGE_SIZE = 256
         self.WILOR_MINI_REPO_ID = kwargs.get("WILOR_MINI_REPO_ID", "warmshao/WiLoR-mini")
-        wilor_pretrained_dir = kwargs.get("wilor_pretrained_dir",
-                                          os.path.join(os.path.dirname(__file__), ".."))
+        wilor_pretrained_dir = kwargs.get("wilor_pretrained_dir", os.path.join(os.path.dirname(__file__), ".."))
         os.makedirs(wilor_pretrained_dir, exist_ok=True)
         mano_mean_path = os.path.join(wilor_pretrained_dir, "pretrained_models", "mano_mean_params.npz")
         if not os.path.exists(mano_mean_path):
             self.logger.info(f"download mano mean npz {mano_mean_path} from huggingface")
-            hf_hub_download(repo_id=self.WILOR_MINI_REPO_ID, subfolder="pretrained_models",
-                            filename="mano_mean_params.npz",
-                            local_dir=wilor_pretrained_dir)
+            hf_hub_download(
+                repo_id=self.WILOR_MINI_REPO_ID,
+                subfolder="pretrained_models",
+                filename="mano_mean_params.npz",
+                local_dir=wilor_pretrained_dir,
+            )
         mano_model_path = os.path.join(wilor_pretrained_dir, "pretrained_models", "MANO_RIGHT.pkl")
         if not os.path.exists(mano_model_path):
             self.logger.info(f"download mano model {mano_model_path} from huggingface")
-            hf_hub_download(repo_id=self.WILOR_MINI_REPO_ID, subfolder="pretrained_models", filename="MANO_RIGHT.pkl",
-                            local_dir=wilor_pretrained_dir)
-        self.logger.info(f"loading WiLor model >>> ")
-        self.wilor_model = WiLor(mano_model_path=mano_model_path, mano_mean_path=mano_mean_path,
-                                 focal_length=self.FOCAL_LENGTH,
-                                 image_size=self.IMAGE_SIZE)
+            hf_hub_download(
+                repo_id=self.WILOR_MINI_REPO_ID,
+                subfolder="pretrained_models",
+                filename="MANO_RIGHT.pkl",
+                local_dir=wilor_pretrained_dir,
+            )
+        self.logger.info("loading WiLor model >>> ")
+        self.wilor_model = WiLor(
+            mano_model_path=mano_model_path,
+            mano_mean_path=mano_mean_path,
+            focal_length=self.FOCAL_LENGTH,
+            image_size=self.IMAGE_SIZE,
+        )
         wilor_model_path = os.path.join(wilor_pretrained_dir, "pretrained_models", "wilor_final.ckpt")
         if not os.path.exists(wilor_model_path):
             self.logger.info(f"download wilor pretrained model {wilor_model_path} from huggingface")
-            hf_hub_download(repo_id=self.WILOR_MINI_REPO_ID, subfolder="pretrained_models", filename="wilor_final.ckpt",
-                            local_dir=wilor_pretrained_dir)
+            hf_hub_download(
+                repo_id=self.WILOR_MINI_REPO_ID,
+                subfolder="pretrained_models",
+                filename="wilor_final.ckpt",
+                local_dir=wilor_pretrained_dir,
+            )
         self.wilor_model.load_state_dict(torch.load(wilor_model_path)["state_dict"], strict=False)
         self.wilor_model.eval()
         self.wilor_model.to(self.device, dtype=self.dtype)
@@ -65,9 +107,13 @@ class WiLorHandPose3dEstimationPipeline:
         yolo_model_path = os.path.join(wilor_pretrained_dir, "pretrained_models", "detector.pt")
         if not os.path.exists(yolo_model_path):
             self.logger.info(f"download yolo pretrained model {wilor_model_path} from huggingface")
-            hf_hub_download(repo_id=self.WILOR_MINI_REPO_ID, subfolder="pretrained_models", filename="detector.pt",
-                            local_dir=wilor_pretrained_dir)
-        self.logger.info(f"loading Yolo hand detection model >>> ")
+            hf_hub_download(
+                repo_id=self.WILOR_MINI_REPO_ID,
+                subfolder="pretrained_models",
+                filename="detector.pt",
+                local_dir=wilor_pretrained_dir,
+            )
+        self.logger.info("loading Yolo hand detection model >>> ")
         self.hand_detector = YOLO(yolo_model_path)
         self.hand_detector.to(self.device)
 
@@ -107,25 +153,36 @@ class WiLorHandPose3dEstimationPipeline:
 
             cvimg = image.copy()
             # Blur image to avoid aliasing artifacts
-            downsampling_factor = ((bbox_size * 1.0) / patch_width)
+            downsampling_factor = (bbox_size * 1.0) / patch_width
             downsampling_factor = downsampling_factor / 2.0
             if downsampling_factor > 1.1:
                 cvimg = gaussian(cvimg, sigma=(downsampling_factor - 1) / 2, channel_axis=2, preserve_range=True)
 
-            img_patch_cv, trans = utils.generate_image_patch_cv2(cvimg,
-                                                                 box_center[0], box_center[1],
-                                                                 bbox_size, bbox_size,
-                                                                 patch_width, patch_height,
-                                                                 flip, 1.0, 0,
-                                                                 border_mode=cv2.BORDER_CONSTANT)
+            img_patch_cv, trans = utils.generate_image_patch_cv2(
+                cvimg,
+                box_center[0],
+                box_center[1],
+                bbox_size,
+                bbox_size,
+                patch_width,
+                patch_height,
+                flip,
+                1.0,
+                0,
+                border_mode=cv2.BORDER_CONSTANT,
+            )
             img_patches.append(img_patch_cv)
         img_patches = np.stack(img_patches)
         img_patches = torch.from_numpy(img_patches).to(device=self.device, dtype=self.dtype)
         wilor_output = self.wilor_model(img_patches, K)
         wilor_output = {k: v.cpu().float().numpy() for k, v in wilor_output.items()}
-        
-        focal_length = torch.tensor([[K[0, 0], K[1, 1]]], dtype=img_patches.dtype, device=img_patches.device).repeat(img_patches.shape[0], 1)
-        camera_center = torch.tensor([[K[0, -1], K[1, -1]]], dtype=img_patches.dtype, device=img_patches.device).repeat(img_patches.shape[0], 1)
+
+        focal_length = torch.tensor([[K[0, 0], K[1, 1]]], dtype=img_patches.dtype, device=img_patches.device).repeat(
+            img_patches.shape[0], 1
+        )
+        camera_center = torch.tensor([[K[0, -1], K[1, -1]]], dtype=img_patches.dtype, device=img_patches.device).repeat(
+            img_patches.shape[0], 1
+        )
 
         for i in range(len(detect_rets)):
             wilor_output_i = {key: val[[i]] for key, val in wilor_output.items()}
@@ -133,23 +190,25 @@ class WiLorHandPose3dEstimationPipeline:
             bbox_size = scale[i].max()
             box_center = center[i]
             right = is_rights[i]
-            multiplier = (2 * right - 1)
+            multiplier = 2 * right - 1
             pred_cam[:, 1] = multiplier * pred_cam[:, 1]
             if right == 0:
                 wilor_output_i["pred_keypoints_3d"][:, :, 0] = -wilor_output_i["pred_keypoints_3d"][:, :, 0]
                 wilor_output_i["pred_vertices"][:, :, 0] = -wilor_output_i["pred_vertices"][:, :, 0]
-                wilor_output_i["global_orient"] = np.concatenate(
-                    (wilor_output_i["global_orient"][:, :, 0:1], -wilor_output_i["global_orient"][:, :, 1:3]),
-                    axis=-1)
-                wilor_output_i["hand_pose"] = np.concatenate(
-                    (wilor_output_i["hand_pose"][:, :, 0:1], -wilor_output_i["hand_pose"][:, :, 1:3]),
-                    axis=-1)
-            scaled_focal_length = focal_length[0] # self.FOCAL_LENGTH / self.IMAGE_SIZE * img_size.max()
+                wilor_output_i["global_orient"] = fullrightpose2leftpose(wilor_output_i["global_orient"])
+                wilor_output_i["hand_pose"] = fullrightpose2leftpose(wilor_output_i["hand_pose"])
+                # wilor_output_i["global_orient"] = np.concatenate(
+                #     (wilor_output_i["global_orient"][:, :, 0:1], -wilor_output_i["global_orient"][:, :, 1:3]), axis=-1
+                # )
+                # wilor_output_i["hand_pose"] = np.concatenate(
+                #     (wilor_output_i["hand_pose"][:, :, 0:1], -wilor_output_i["hand_pose"][:, :, 1:3]), axis=-1
+                # )
+            scaled_focal_length = focal_length[0]  # self.FOCAL_LENGTH / self.IMAGE_SIZE * img_size.max()
             pred_cam_t_full = utils.cam_crop_to_full(
-                pred_cam, 
-                box_center[None], 
-                bbox_size, 
-                img_size[None], 
+                pred_cam,
+                box_center[None],
+                bbox_size,
+                img_size[None],
                 scaled_focal_length.cpu().numpy(),
                 # camera_center[0].cpu().numpy()
             )
@@ -193,18 +252,25 @@ class WiLorHandPose3dEstimationPipeline:
 
             cvimg = image.copy()
             # Blur image to avoid aliasing artifacts
-            downsampling_factor = ((bbox_size * 1.0) / patch_width)
+            downsampling_factor = (bbox_size * 1.0) / patch_width
             downsampling_factor = downsampling_factor / 2.0
             if downsampling_factor > 1.1:
                 cvimg = gaussian(cvimg, sigma=(downsampling_factor - 1) / 2, channel_axis=2, preserve_range=True)
             img_size = np.array([cvimg.shape[1], cvimg.shape[0]])
 
-            img_patch_cv, trans = utils.generate_image_patch_cv2(cvimg,
-                                                                 box_center[0], box_center[1],
-                                                                 bbox_size, bbox_size,
-                                                                 patch_width, patch_height,
-                                                                 flip, 1.0, 0,
-                                                                 border_mode=cv2.BORDER_CONSTANT)
+            img_patch_cv, trans = utils.generate_image_patch_cv2(
+                cvimg,
+                box_center[0],
+                box_center[1],
+                bbox_size,
+                bbox_size,
+                patch_width,
+                patch_height,
+                flip,
+                1.0,
+                0,
+                border_mode=cv2.BORDER_CONSTANT,
+            )
             img_patches.append(img_patch_cv)
 
         img_patches = np.stack(img_patches)
@@ -218,7 +284,7 @@ class WiLorHandPose3dEstimationPipeline:
             bbox_size = scale[i].max()
             box_center = center[i]
             right = is_rights[i]
-            multiplier = (2 * right - 1)
+            multiplier = 2 * right - 1
             pred_cam[:, 1] = multiplier * pred_cam[:, 1]
             if right == 0:
                 wilor_output_i["pred_keypoints_3d"][:, :, 0] = -wilor_output_i["pred_keypoints_3d"][:, :, 0]
@@ -229,16 +295,22 @@ class WiLorHandPose3dEstimationPipeline:
                 wilor_output_i["hand_pose"] = np.concatenate(
                     (wilor_output_i["hand_pose"][:, :, 0:1], -wilor_output_i["hand_pose"][:, :, 1:3]),
                     axis=-1)
+
+                # For rotation parameters in axis-angle representation:
+
             scaled_focal_length = self.FOCAL_LENGTH / self.IMAGE_SIZE * img_size.max()
-            pred_cam_t_full = utils.cam_crop_to_full(pred_cam, box_center[None], bbox_size, img_size[None],
-                                                     scaled_focal_length)
+            pred_cam_t_full = utils.cam_crop_to_full(
+                pred_cam, box_center[None], bbox_size, img_size[None], scaled_focal_length
+            )
             wilor_output_i["pred_cam_t_full"] = pred_cam_t_full
             wilor_output_i["scaled_focal_length"] = scaled_focal_length
             # 弱透视
-            pred_keypoints_2d = utils.perspective_projection(wilor_output_i["pred_keypoints_3d"],
-                                                             translation=pred_cam_t_full,
-                                                             focal_length=np.array([scaled_focal_length] * 2)[None],
-                                                             camera_center=img_size[None] / 2)
+            pred_keypoints_2d = utils.perspective_projection(
+                wilor_output_i["pred_keypoints_3d"],
+                translation=pred_cam_t_full,
+                focal_length=np.array([scaled_focal_length] * 2)[None],
+                camera_center=img_size[None] / 2,
+            )
             wilor_output_i["pred_keypoints_2d"] = pred_keypoints_2d
             detect_rets[i]["wilor_preds"] = wilor_output_i
 
