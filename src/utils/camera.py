@@ -236,14 +236,6 @@ def project_to_2d_np(points_3d, K, T_camera_world):
     np.ndarray
         Batch of 2D integer pixel coordinates with shape (2, N) of the projected points in the image plane.
 
-    Notes
-    -----
-    The projection pipeline:
-    1. Convert 3D points to homogeneous coordinates
-    2. Transform to camera space using extrinsic matrix
-    3. Project to image plane using intrinsic matrix
-    4. Normalize by depth (z-coordinate)
-    5. Convert to integer pixel coordinates
     """
     # Get number of points
     n_points = points_3d.shape[-1]

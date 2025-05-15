@@ -8,7 +8,7 @@ import rootutils
 rootutils.setup_root(__file__, ".project-root", pythonpath=True, dotenv=True)
 
 from src.utils.camera import load_cam_infos, project_to_2d_np
-from src.utils.image import undistort_image
+from utils.visualization.image import undistort_image
 
 COLORS = [
     (255, 0, 0),  # Red
