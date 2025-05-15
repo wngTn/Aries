@@ -1,6 +1,6 @@
 Start,End,Action
-410,490,Forehand Stitch
-491,580,Suture Pulling
+410,490,Forehand stitch
+491,580,Suture pulling
 600,790,Instrumt tying
 820,828,Suture cutting
 900,940,Needle mounting
@@ -17,5 +17,42 @@ Start,End,Action
 2140,2190,Forehand stitch
 2191,2235,Suture pulling
 2236,2450,Knot tying
+2468,2490,Suture cutting
+2516,2566,Needle mounting
+2628,2710,Forehand stitch
+2728,2816,Needle mounting
+2838,2896,Forehand stitch
+2897,2926,Suture pulling
+2927,3056,Needle mounting
+3104,3146,Forehand stitch
+3147,3158,Suture pulling
+3214,3636,Instrument tying
+3716,3736,Needle mounting
+3762,3860,Backhand stitch
+3861,3884,Suture pulling
+3904,4162,Instrument tying
+4188,4198,Suture cutting
+4268,4288,Needle mounting
+4320,4460,Forehand stitch
+4668,4722,Forehand stitch
+4725,4774,Suture pulling
+4794,5828,Knot tying
+5872,5882,Suture cutting
+5938,5956,Needle mounting
+6016,6066,Forehand stitching
+6067,6118,Suture pulling
+6122,6350,Instrument tying
+6376,6424,Suture cutting
+6904,6956,Suture cutting
+7434,7490,Needle mounting
+7548,7642,Forehand suture
+7643,7694,Suture pulling
+7700,8130,Instrument tying
+8158,8172,Suture cutting
+8230,8278,Needle mounting
+8300,8400,Backhand suture
+8436,8512,Suture pulling
+8514,8834,Instrument tying
+8854,8866,Suture cutting
 
 
