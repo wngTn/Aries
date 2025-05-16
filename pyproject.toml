@@ -3,7 +3,7 @@ name = "aries"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = "==3.10.16"
+requires-python = "==3.11.12"
 dependencies = [
     "torch==2.3.1",
     "torchvision==0.18.1",
@@ -32,6 +32,8 @@ dependencies = [
     "open3d>=0.19.0",
     "ffmpeg>=1.4",
     "pyarrow>=20.0.0",
+    "aria-studio>=1.1.0",
+    "projectaria-tools>=1.6.0",
 ]
 
 [[tool.uv.index]]
@@ -39,21 +41,19 @@ name = "pytorch-cu118"
 url = "https://download.pytorch.org/whl/cu118"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cu118" }  # Remove the marker since you're on Linux
+    { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+    { index = "pytorch-cu118", marker = "sys_platform == 'linux'" }
 ]
 torchvision = [
-    { index = "pytorch-cu118" }  # Remove the marker since you're on Linux
-]
-pytorch3d = [
-    { git = "https://github.com/facebookresearch/pytorch3d.git" },
-]
-clip = [
-    { git = "https://github.com/openai/CLIP.git" },
-]
-human_body_prior = [
-    { git = "https://github.com/nghorbani/human_body_prior.git"}
+    { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+    { index = "pytorch-cu118", marker = "sys_platform == 'linux'"}
 ]
 
 [tool.ruff]
