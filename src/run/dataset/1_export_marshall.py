@@ -192,9 +192,9 @@ def extract_frames_with_timestamps(input_dir, output_dir, timestamps, cam_infos)
     if timestamps is not None:
         # Process with timestamp synchronization
         print("Processing with timestamp synchronization...")
-        timestamps_array_1 = process_files_with_timestamps(ch1_files, timestamps, output_dir, cam_num=1, cam_params=cam_infos["camera_05"])
+        timestamps_array_1 = process_files_with_timestamps(ch1_files, timestamps, output_dir, cam_num=1, cam_params=cam_infos["camera05"])
         timestamps_array_2 = process_files_with_timestamps(
-            ch2_files, timestamps, output_dir, cam_num=2, cam_params=cam_infos["camera_06"]
+            ch2_files, timestamps, output_dir, cam_num=2, cam_params=cam_infos["camera06"]
         )
     else:
         # Process at 8 FPS
